@@ -450,3 +450,137 @@ window.addEventListener('appinstalled', () => {
   deferredInstallPrompt = null;
   if (installApp) installApp.classList.add('hidden');
 });
+
+// ─────────────────────────────────────────────────────────────
+// NOTIFICACIONES WEB PUSH
+// ─────────────────────────────────────────────────────────────
+const notificationEls = {
+  section: document.getElementById('notifications'),
+  status: document.getElementById('notificationStatus'),
+  state: document.getElementById('notificationState'),
+  button: document.getElementById('enableNotifications'),
+  options: document.getElementById('notificationOptions'),
+  smn: document.getElementById('alertsSmn'),
+  storm: document.getElementById('alertsStorm'),
+  daily: document.getElementById('dailySummary')
+};
+const PUSH_API = 'https://clima-consenso-smn.roxkleis.workers.dev';
+
+function notificationSetStatus(text, enabled=false){
+  if(notificationEls.status) notificationEls.status.textContent=text;
+  if(notificationEls.state){
+    notificationEls.state.textContent=enabled?'ON':'OFF';
+    notificationEls.state.classList.toggle('on',enabled);
+  }
+}
+
+async function getPushSubscription(){
+  if(!('serviceWorker' in navigator) || !('PushManager' in window)) throw new Error('Este navegador no admite Web Push.');
+  const registration=await navigator.serviceWorker.ready;
+  let subscription=await registration.pushManager.getSubscription();
+  if(subscription) return subscription;
+
+  const config=await fetch(PUSH_API+'/push/config',{cache:'no-store'}).then(r=>{
+    if(!r.ok) throw new Error('No se pudo obtener la configuración de notificaciones.');
+    return r.json();
+  });
+  if(!config.publicKey) throw new Error('Falta la clave pública VAPID.');
+
+  const permission=await Notification.requestPermission();
+  if(permission!=='granted') throw new Error('Permiso de notificaciones no concedido.');
+
+  subscription=await registration.pushManager.subscribe({
+    userVisibleOnly:true,
+    applicationServerKey: urlBase64ToUint8Array(config.publicKey)
+  });
+  return subscription;
+}
+
+function urlBase64ToUint8Array(base64String){
+  const padding='='.repeat((4-base64String.length%4)%4);
+  const raw=atob((base64String+padding).replace(/-/g,'+').replace(/_/g,'/'));
+  const output=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) output[i]=raw.charCodeAt(i);
+  return output;
+}
+
+async function savePushSubscription(){
+  const subscription=await getPushSubscription();
+  const json=subscription.toJSON();
+  const position=await getBestPosition().catch(()=>null);
+  const payload={
+    endpoint:json.endpoint,
+    keys:json.keys,
+    lat:position?.coords?.latitude ?? null,
+    lon:position?.coords?.longitude ?? null,
+    alerts_smn:notificationEls.smn.checked,
+    alerts_storm:notificationEls.storm.checked,
+    daily_summary:notificationEls.daily.checked
+  };
+  const r=await fetch(PUSH_API+'/push/subscribe',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload)
+  });
+  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).error || 'No se pudo registrar el dispositivo.');
+  return subscription;
+}
+
+async function updatePushPreferences(){
+  const subscription=await navigator.serviceWorker.ready.then(r=>r.pushManager.getSubscription());
+  if(!subscription) return;
+  const json=subscription.toJSON();
+  const position=await getBestPosition().catch(()=>null);
+  await fetch(PUSH_API+'/push/subscribe',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      endpoint:json.endpoint,
+      keys:json.keys,
+      lat:position?.coords?.latitude ?? null,
+      lon:position?.coords?.longitude ?? null,
+      alerts_smn:notificationEls.smn.checked,
+      alerts_storm:notificationEls.storm.checked,
+      daily_summary:notificationEls.daily.checked
+    })
+  });
+}
+
+async function initNotifications(){
+  if(!notificationEls.button) return;
+  if(!('Notification' in window) || !('PushManager' in window)){
+    notificationSetStatus('Este navegador no admite notificaciones push.',false);
+    notificationEls.button.disabled=true;
+    return;
+  }
+  const permission=Notification.permission;
+  const registration=await navigator.serviceWorker.ready;
+  const subscription=await registration.pushManager.getSubscription();
+  if(permission==='granted' && subscription){
+    notificationSetStatus('Alertas activadas en este dispositivo.',true);
+    notificationEls.options.classList.remove('hidden');
+    notificationEls.button.textContent='🔔 Alertas activadas';
+  }else if(permission==='denied'){
+    notificationSetStatus('Las notificaciones están bloqueadas para este sitio. Habilitalas desde los permisos del navegador.',false);
+  }
+}
+
+notificationEls.button?.addEventListener('click',async()=>{
+  notificationEls.button.disabled=true;
+  try{
+    await savePushSubscription();
+    notificationSetStatus('Alertas activadas en este dispositivo.',true);
+    notificationEls.options.classList.remove('hidden');
+    notificationEls.button.textContent='🔔 Alertas activadas';
+  }catch(error){
+    notificationSetStatus(error?.message || 'No se pudieron activar las notificaciones.',false);
+  }finally{
+    notificationEls.button.disabled=false;
+  }
+});
+
+[notificationEls.smn,notificationEls.storm,notificationEls.daily].forEach(input=>{
+  input?.addEventListener('change',()=>updatePushPreferences().catch(console.warn));
+});
+
+initNotifications().catch(console.warn);
