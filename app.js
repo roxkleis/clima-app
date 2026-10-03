@@ -143,7 +143,8 @@ function consensusFor(snaps){
   const codeVals=main.filter(x=>Number.isFinite(x.code));
   const code=codeVals.length ? codeVals[0].code : 0;
   const members=new Set(main.map(x=>x.key));
-  return {groups,main,count,total:usable.length,temp:mean,apparent,humidity,precipitation:precip,code,members};
+  const split22 = total === 4 && groups.length === 2 && groups[0].length === 2 && groups[1].length === 2;
+  return {groups,main,count,total:usable.length,temp:mean,apparent,humidity,precipitation:precip,code,members,split22};
 }
 
 
@@ -158,13 +159,26 @@ function consensusWeatherCode(snaps){
 function renderModelDetails(snaps,consensus){
   els.modelCards.innerHTML='';
   const mainSet=consensus.members;
+  const splitGroups=consensus.split22 ? consensus.groups : null;
   for(const s of snaps){
     const card=document.createElement('div');
-    card.className=`model-card ${mainSet.has(s.key) ? '' : 'outlier'}`;
+    let tag='';
+    let isOutlier=false;
+
+    if(splitGroups){
+      const groupIndex=splitGroups.findIndex(g=>g.some(x=>x.key===s.key));
+      const group=groupIndex >= 0 ? splitGroups[groupIndex] : [];
+      tag=`Grupo ${String.fromCharCode(65 + Math.max(0, groupIndex))} · ${group.length}/4`;
+    }else{
+      isOutlier=!mainSet.has(s.key);
+      tag=mainSet.has(s.key) ? 'Grupo principal' : 'Diferencia';
+    }
+
+    card.className=`model-card ${isOutlier ? 'outlier' : ''}`;
     card.innerHTML=`
       <div class="model-top">
         <div class="model-name">${s.flag} ${s.name}</div>
-        <div class="model-tag">${mainSet.has(s.key) ? 'Grupo principal' : 'Diferencia'}</div>
+        <div class="model-tag">${tag}</div>
       </div>
       <div class="model-values">
         <div><span>Temperatura</span><strong>${Number.isFinite(s.temp)?Math.round(s.temp)+'°':'—'}</strong></div>
