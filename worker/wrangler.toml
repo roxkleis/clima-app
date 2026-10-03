@@ -1,0 +1,7 @@
+name = "clima-consenso-smn"
+main = "src/index.js"
+compatibility_date = "2026-10-03"
+
+[[r2_buckets]]
+binding = "SMN_DATA"
+bucket_name = "clima-consenso-smn"
