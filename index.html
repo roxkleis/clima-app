@@ -59,11 +59,11 @@
     <div id="daily" class="daily"></div>
   </section>
 
-  <section id="modelDetails" class="details card hidden">
+  <div id="modelDetails" class="details-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="detailsTitle"><section class="details card">
     <div class="details-head">
       <div>
         <div class="eyebrow">COMPARACIÓN</div>
-        <h2>Modelos meteorológicos</h2>
+        <h2 id="detailsTitle">Modelos meteorológicos</h2>
       </div>
       <button id="closeDetails" class="close" type="button">×</button>
     </div>
@@ -72,7 +72,7 @@
       La etiqueta de consenso se calcula agrupando la temperatura actual dentro de una tolerancia de ±1 °C.
       En esta etapa se comparan ECMWF, GFS e ICON. SMN WRF se incorporará en la próxima fase.
     </div>
-  </section>
+  </section></div>
 
   <section class="card technical">
     <h2>Datos de la consulta</h2>

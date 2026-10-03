@@ -230,6 +230,17 @@ async function loadWeather(){
 }
 
 els.retry.addEventListener("click",loadWeather);
-els.consensusBadge.addEventListener("click",()=>els.modelDetails.classList.toggle("hidden"));
-els.closeDetails.addEventListener("click",()=>els.modelDetails.classList.add("hidden"));
+els.consensusBadge.addEventListener("click",()=>{
+  els.modelDetails.classList.remove("hidden");
+  document.body.style.overflow="hidden";
+});
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){
+    els.modelDetails.classList.add("hidden");
+    document.body.style.overflow="";
+  }
+});
+els.closeDetails.addEventListener("click",()=>{els.modelDetails.classList.add("hidden");document.body.style.overflow="";});
 loadWeather();
+
+els.modelDetails.addEventListener("click",e=>{if(e.target===els.modelDetails){els.modelDetails.classList.add("hidden");document.body.style.overflow="";}});
