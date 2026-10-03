@@ -1,3 +1,5 @@
+import { sendPush } from "./push.js";
+
 const HEADER_BYTES_PER_VALUE = 2;
 const VARIABLES = ["temperature", "humidity", "precipitation", "windSpeed", "windDirection"];
 const BYTES_PER_POINT = VARIABLES.length * HEADER_BYTES_PER_VALUE;
@@ -41,8 +43,8 @@ function lccProject(lat, lon, p) {
   const theta = n * (lambda - lambda0);
 
   return {
-    x: r * Math.sin(theta),
-    y: rho0 - r * Math.cos(theta),
+    x: r * Math.sin(theta) + Number(p.falseEasting ?? p.false_easting ?? 0),
+    y: rho0 - r * Math.cos(theta) + Number(p.falseNorthing ?? p.false_northing ?? 0),
   };
 }
 
@@ -108,6 +110,37 @@ function corsHeaders() {
   };
 }
 
+
+async function pushSubscribe(request,env){
+  let b;try{b=await request.json()}catch{return new Response(JSON.stringify({ok:false,error:"Invalid JSON"}),{status:400,headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}})}
+  const endpoint=String(b?.endpoint||""),p256dh=String(b?.keys?.p256dh||""),auth=String(b?.keys?.auth||"");
+  if(!endpoint.startsWith("https://")||!p256dh||!auth)return new Response(JSON.stringify({ok:false,error:"Invalid subscription"}),{status:400,headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+  const n=v=>Number.isFinite(Number(v))?Number(v):null;
+  await env.DB.prepare("INSERT INTO push_subscriptions(endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,last_seen_at) VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh,auth=excluded.auth,lat=excluded.lat,lon=excluded.lon,alerts_smn=excluded.alerts_smn,alerts_storm=excluded.alerts_storm,daily_summary=excluded.daily_summary,last_seen_at=CURRENT_TIMESTAMP")
+    .bind(endpoint,p256dh,auth,n(b?.lat),n(b?.lon),b?.alerts_smn===false?0:1,b?.alerts_storm===false?0:1,b?.daily_summary===false?0:1).run();
+  return new Response(JSON.stringify({ok:true}),{headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+}
+async function pushUnsubscribe(request,env){
+  let b;try{b=await request.json()}catch{return new Response(JSON.stringify({ok:false,error:"Invalid JSON"}),{status:400,headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}})}
+  const endpoint=String(b?.endpoint||"");if(!endpoint)return new Response(JSON.stringify({ok:false,error:"Missing endpoint"}),{status:400,headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+  await env.DB.prepare("DELETE FROM push_subscriptions WHERE endpoint=?").bind(endpoint).run();
+  return new Response(JSON.stringify({ok:true}),{headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+}
+async function pushStatus(env){
+  const row=await env.DB.prepare("SELECT COUNT(*) AS count FROM push_subscriptions").first();
+  return new Response(JSON.stringify({ok:true,subscriptions:Number(row?.count||0)}),{headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+}
+async function pushSendOne(request,env){
+  let b;try{b=await request.json()}catch{return new Response(JSON.stringify({ok:false,error:"Invalid JSON"}),{status:400,headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+  }
+  const endpoint=String(b?.endpoint||"");
+  const row=await env.DB.prepare("SELECT endpoint,p256dh,auth FROM push_subscriptions WHERE endpoint=?").bind(endpoint).first();
+  if(!row)return new Response(JSON.stringify({ok:false,error:"Subscription not found"}),{status:404,headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+  const result=await sendPush({endpoint:row.endpoint,keys:{p256dh:row.p256dh,auth:row.auth}},b?.payload||{title:"Clima by richardspulgar",body:"Prueba de notificaciones"},env);
+  if(result.gone)await env.DB.prepare("DELETE FROM push_subscriptions WHERE endpoint=?").bind(endpoint).run();
+  return new Response(JSON.stringify({ok:result.ok,status:result.status,gone:result.gone}),{status:result.ok?200:502,headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+}
+
 export default {
   async fetch(request, env) {
     const headers = corsHeaders();
@@ -116,12 +149,20 @@ export default {
       return new Response(null, { status: 204, headers });
     }
 
-    if (request.method !== "GET") {
+    if (request.method !== "GET" && request.method !== "POST") {
       return new Response("Method not allowed", { status: 405, headers });
     }
 
     try {
       const url = new URL(request.url);
+      if (url.pathname === "/push/config" && request.method === "GET") {
+        return new Response(JSON.stringify({ok:true,publicKey:env.VAPID_PUBLIC_KEY}),{headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+      }
+      if (url.pathname === "/push/subscribe" && request.method === "POST") return await pushSubscribe(request,env);
+      if (url.pathname === "/push/unsubscribe" && request.method === "POST") return await pushUnsubscribe(request,env);
+      if (url.pathname === "/push/status" && request.method === "GET") return await pushStatus(env);
+      if (url.pathname === "/push/send-one" && request.method === "POST") return await pushSendOne(request,env);
+
       const lat = Number(url.searchParams.get("lat"));
       const lon = Number(url.searchParams.get("lon"));
       const requestedHours = Number(url.searchParams.get("hours") || "6");
@@ -134,7 +175,7 @@ export default {
         );
       }
 
-      const hours = Math.max(0, Math.min(6, Math.floor(requestedHours)));
+      const hours = Math.max(0, Math.min(72, Math.floor(requestedHours)));
       const metadata = await getMetadata(env);
 
       if (!metadata) {
@@ -178,6 +219,7 @@ export default {
 
       return new Response(
         JSON.stringify({
+          ok: true,
           model: "SMN-WRF",
           resolutionKm: metadata.resolutionKm,
           cycle: metadata.runId,
