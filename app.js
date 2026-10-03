@@ -104,96 +104,13 @@ function currentIndex(data,targetIso=null){
   return idx;
 }
 
-const SMN_OBS_API='https://w2b.smn.gov.ar/oapi';
-const SMN_OBS_COLLECTION='urn:wmo:md:ar-smn:autosmn';
-const SMN_STATIONS_COLLECTION='stations';
-
-function haversineKm(lat1,lon1,lat2,lon2){
-  const R=6371;
-  const p1=lat1*Math.PI/180, p2=lat2*Math.PI/180;
-  const dp=(lat2-lat1)*Math.PI/180, dl=(lon2-lon1)*Math.PI/180;
-  const a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
-  return 2*R*Math.asin(Math.sqrt(a));
-}
-
-async function fetchJsonWithTimeout(url,timeoutMs=12000){
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),timeoutMs);
-  try{
-    const r=await fetch(url,{cache:'no-store',signal:controller.signal});
-    if(!r.ok) throw new Error(`HTTP ${r.status}`);
-    return await r.json();
-  }finally{clearTimeout(timer);}
-}
+const SMN_OBS_PROXY='https://clima-consenso-smn.roxkleis.workers.dev/observation';
 
 async function fetchNearestSMNObservation(lat,lon){
-  const stationUrl=`${SMN_OBS_API}/collections/${SMN_STATIONS_COLLECTION}/items?f=json&limit=200`;
-  const stationData=await fetchJsonWithTimeout(stationUrl);
-  const stations=(stationData.features||[])
-    .map(f=>{
-      const c=f.geometry?.coordinates;
-      const p=f.properties||{};
-      if(!Array.isArray(c)||c.length<2) return null;
-      return {
-        id:p.id||f.id,
-        name:p.name||'Estación SMN',
-        lon:Number(c[0]),lat:Number(c[1]),
-        status:p.status
-      };
-    })
-    .filter(s=>s && Number.isFinite(s.lat) && Number.isFinite(s.lon) && s.status!=='standBy')
-    .map(s=>({...s,distanceKm:haversineKm(lat,lon,s.lat,s.lon)}))
-    .sort((a,b)=>a.distanceKm-b.distanceKm);
-
-  if(!stations.length) throw new Error('SMN sin estaciones georreferenciadas');
-
-  // Probamos las tres estaciones más cercanas: una estación puede estar
-  // operativa en el catálogo pero no haber reportado recientemente.
-  for(const station of stations.slice(0,3)){
-    const params=new URLSearchParams({
-      f:'json',
-      limit:'40',
-      sortby:'-reportTime',
-      wigos_station_identifier:station.id
-    });
-    try{
-      const data=await fetchJsonWithTimeout(`${SMN_OBS_API}/collections/${encodeURIComponent(SMN_OBS_COLLECTION)}/items?${params.toString()}`);
-      const features=data.features||[];
-      const latestReport=features
-        .map(f=>f.properties?.reportTime)
-        .filter(Boolean)
-        .sort((a,b)=>new Date(b)-new Date(a))[0];
-      if(!latestReport) continue;
-
-      const sameReport=features.filter(f=>f.properties?.reportTime===latestReport);
-      const values={};
-      for(const feature of sameReport){
-        const p=feature.properties||{};
-        if(p.name && Number.isFinite(Number(p.value))) values[p.name]=Number(p.value);
-      }
-
-      const temp=values.air_temperature;
-      if(!Number.isFinite(temp)) continue;
-
-      const ageMinutes=(Date.now()-new Date(latestReport).getTime())/60000;
-      if(ageMinutes>180) continue;
-
-      return {
-        station,
-        temp,
-        humidity:Number.isFinite(values.relative_humidity)?values.relative_humidity:null,
-        windSpeed:Number.isFinite(values.wind_speed)?values.wind_speed:null,
-        precipitation:Number.isFinite(values.total_precipitation_or_total_water_equivalent)
-          ? values.total_precipitation_or_total_water_equivalent : null,
-        time:latestReport,
-        ageMinutes:Math.max(0,ageMinutes)
-      };
-    }catch(error){
-      console.warn('SMN observación',station.name,error);
-    }
-  }
-
-  throw new Error('No hay una observación SMN reciente cerca de la ubicación.');
+  const url=`${SMN_OBS_PROXY}?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
+  const data=await fetchJsonWithTimeout(url,15000);
+  if(!data?.ok || !data.observation) throw new Error(data?.error || 'SMN sin observación');
+  return data.observation;
 }
 
 function apparentSMN(tempC,rh,windMs){
