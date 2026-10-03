@@ -115,15 +115,36 @@ function currentSnapshot(item,targetIso=null){
 
 function clusters(values,tolerance=1){
   const sorted=[...values].sort((a,b)=>a.temp-b.temp);
+
+  // Un grupo es coherente si todos sus valores caben dentro de
+  // una ventana de ±tolerance alrededor de un valor central.
+  // Con tolerance=1 esto equivale a un rango máximo de 2 °C.
   const groups=[];
-  for(const item of sorted){
-    let placed=false;
-    for(const g of groups){
-      const center=g.reduce((s,x)=>s+x.temp,0)/g.length;
-      if(Math.abs(item.temp-center)<=tolerance){g.push(item);placed=true;break;}
+  let remaining=[...sorted];
+
+  while(remaining.length){
+    let best=[];
+    for(let i=0;i<remaining.length;i++){
+      const candidate=[];
+      for(let j=i;j<remaining.length;j++){
+        if(remaining[j].temp - remaining[i].temp <= tolerance*2){
+          candidate.push(remaining[j]);
+        }else{
+          break;
+        }
+      }
+      if(candidate.length>best.length){
+        best=candidate;
+      }
     }
-    if(!placed) groups.push([item]);
+
+    if(!best.length) best=[remaining[0]];
+
+    const bestKeys=new Set(best.map(x=>x.key));
+    groups.push(best);
+    remaining=remaining.filter(x=>!bestKeys.has(x.key));
   }
+
   groups.sort((a,b)=>b.length-a.length || a[0].temp-b[0].temp);
   return groups;
 }
