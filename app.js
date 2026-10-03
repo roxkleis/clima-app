@@ -322,15 +322,51 @@ function showGpsError(error){
   setMessage({1:'Permiso de ubicación denegado. Habilitalo para este sitio.',2:'No fue posible determinar tu ubicación.',3:'La solicitud de ubicación tardó demasiado.'}[error.code]||'No se pudo obtener la ubicación.');
 }
 
+function getPosition(options){
+  return new Promise((resolve,reject)=>{
+    if(!navigator.geolocation){
+      reject({code:2,message:'Geolocalización no disponible en este navegador.'});
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(resolve,reject,options);
+  });
+}
+
+async function getBestPosition(){
+  // Android Chrome suele resolver antes la ubicación por red que el GPS puro.
+  // Primero intentamos una ubicación rápida y suficientemente útil para una
+  // grilla meteorológica de 4 km; si falla, hacemos un segundo intento con GPS.
+  try{
+    return await getPosition({
+      enableHighAccuracy:false,
+      timeout:10000,
+      maximumAge:300000
+    });
+  }catch(firstError){
+    if(firstError?.code===1) throw firstError;
+
+    return await getPosition({
+      enableHighAccuracy:true,
+      timeout:30000,
+      maximumAge:60000
+    });
+  }
+}
+
 async function loadWeather(){
   els.status.textContent='BUSCANDO';
-  setMessage('Obteniendo ubicación y consultando SMN, ECMWF, GFS e ICON…');
-  navigator.geolocation.getCurrentPosition(async position=>{
+  setMessage('Obteniendo ubicación…');
+
+  try{
+    const position=await getBestPosition();
+
     els.lat.textContent=position.coords.latitude.toFixed(6);
     els.lon.textContent=position.coords.longitude.toFixed(6);
     els.accuracy.textContent=`${Math.round(position.coords.accuracy)} m`;
 
     const lat=position.coords.latitude, lon=position.coords.longitude;
+    setMessage('Ubicación obtenida. Consultando SMN, ECMWF, GFS e ICON…');
+
     const requests=[
       fetchOpenMeteo('ecmwf',lat,lon),
       fetchOpenMeteo('gfs',lat,lon),
@@ -345,7 +381,9 @@ async function loadWeather(){
       return;
     }
     renderMain(ok,position);
-  },showGpsError,{enableHighAccuracy:true,timeout:15000,maximumAge:300000});
+  }catch(error){
+    showGpsError(error);
+  }
 }
 
 els.retry.addEventListener('click',loadWeather);
