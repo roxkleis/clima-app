@@ -184,6 +184,10 @@ async function getNearestSMNObservation(lat, lon) {
     lat + delta,
   ].join(",");
 
+  const nowIso = new Date();
+  const fromIso = new Date(nowIso.getTime() - 3 * 60 * 60 * 1000);
+  const observationWindow = `${fromIso.toISOString()}/${nowIso.toISOString()}`;
+
   let candidates = [];
 
   for (const collection of SMN_OBS_COLLECTIONS) {
@@ -191,6 +195,7 @@ async function getNearestSMNObservation(lat, lon) {
       const params = new URLSearchParams({
         f: "json",
         bbox,
+        datetime: observationWindow,
         limit: "500",
         sortby: "-reportTime",
         name: "air_temperature",
