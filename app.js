@@ -1,4 +1,4 @@
-// Clima Consenso · consensus engine v7 · 14/15/16 => 3/4 within ±1 °C
+// Clima by richardspulgar · consensus engine v9 · 14/15/16 => 3/4
 const MODELS = {
   ecmwf: {name:"ECMWF", flag:"🇪🇺", label:"IFS HRES · 9 km", endpoint:"https://api.open-meteo.com/v1/ecmwf"},
   gfs:   {name:"GFS",   flag:"🇺🇸", label:"NOAA GFS Global · ~13 km", endpoint:"https://api.open-meteo.com/v1/gfs"},
