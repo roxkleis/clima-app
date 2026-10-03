@@ -1,0 +1,5 @@
+xarray
+h5netcdf
+numpy
+pyproj
+boto3
