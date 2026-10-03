@@ -444,10 +444,14 @@ function renderHourly(items){
       }
     }
     if(!vals.length) continue;
-    const groups=clusters(vals,1);
-    const main=groups[0] || vals;
-    const temp=main.reduce((s,x)=>s+x.temp,0)/main.length;
-    const precip=main.reduce((s,x)=>s+x.precip,0)/main.length;
+    const hourlySnaps=vals.map((x,i)=>({...x,key:String(i),name:String(i)}));
+    const hc=consensusFor(hourlySnaps);
+    const temp=hc.temp;
+    const main=hc.main.length>=2 ? hc.main : hourlySnaps;
+    const precipVals=main.map(x=>x.precip).filter(Number.isFinite);
+    const precip=hc.main.length>=2
+      ? (precipVals.length ? precipVals.reduce((s,x)=>s+x,0)/precipVals.length : 0)
+      : (precipVals.length ? median(precipVals) : 0);
     const codeVals=main.filter(x=>Number.isFinite(x.code)).map(x=>x.code);
     const code=codeVals.length ? codeVals[Math.floor(codeVals.length/2)] : 0;
     const [ico]=weatherInfo(code);
@@ -493,12 +497,10 @@ function renderDaily(items){
       min.push(Math.min(...smnDay.temps));
     }
 
-    const maxGroups=clusters(max.map((temp,i)=>({key:i,temp})),1);
-    const minGroups=clusters(min.map((temp,i)=>({key:i,temp})),1);
-    const maxMain=maxGroups[0] || [];
-    const minMain=minGroups[0] || [];
-    const consensusMax=maxMain.length ? maxMain.reduce((s,x)=>s+x.temp,0)/maxMain.length : null;
-    const consensusMin=minMain.length ? minMain.reduce((s,x)=>s+x.temp,0)/minMain.length : null;
+    const maxConsensus=consensusFor(max.map((temp,i)=>({key:String(i),name:String(i),temp})));
+    const minConsensus=consensusFor(min.map((temp,i)=>({key:String(i),name:String(i),temp})));
+    const consensusMax=maxConsensus.temp;
+    const consensusMin=minConsensus.temp;
     const code=codes.length ? codes[Math.floor(codes.length/2)] : 0;
     const [ico,desc]=weatherInfo(code);
     const modelCount=smnDay?.temps?.length ? items.length : openItems.length;
