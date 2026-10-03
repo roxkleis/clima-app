@@ -4,72 +4,88 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#071827">
-  <meta name="description" content="Clima Consenso - primera integración ECMWF">
+  <meta name="description" content="Clima Consenso - ECMWF, GFS e ICON">
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=2">
   <title>Clima Consenso</title>
 </head>
 <body>
-  <main class="app">
-    <header class="topbar">
+<main class="app">
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">MI UBICACIÓN</div>
+      <h1 id="location">Buscando ubicación…</h1>
+      <div class="updated" id="updated">Esperando datos…</div>
+    </div>
+    <div class="status" id="status">GPS</div>
+  </header>
+
+  <section class="hero card">
+    <div class="weather-icon" id="weatherIcon">🌤️</div>
+    <div class="hero-main">
+      <div class="condition" id="condition">Cargando consenso…</div>
+      <div class="temperature"><span id="temperature">—</span><sup>°</sup></div>
+      <div class="feels">Sensación térmica <strong id="apparent">—</strong>°</div>
+    </div>
+  </section>
+
+  <section class="metrics">
+    <div class="metric card"><span>🌧️ Precipitación</span><strong id="rain">—</strong></div>
+    <div class="metric card"><span>💧 Humedad</span><strong id="humidity">—</strong></div>
+  </section>
+
+  <button id="consensusBadge" class="consensus" type="button">
+    <span id="consensusDot" class="dot"></span>
+    <span>
+      <strong id="consensusTitle">Consenso —</strong>
+      <small id="consensusSub">ECMWF · GFS · ICON</small>
+    </span>
+    <span class="chevron">›</span>
+  </button>
+
+  <section class="section">
+    <div class="section-title">
+      <h2>Próximas horas</h2>
+      <span>6 horas</span>
+    </div>
+    <div id="hourly" class="hourly"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-title">
+      <h2>Próximos 7 días</h2>
+      <span>Consenso</span>
+    </div>
+    <div id="daily" class="daily"></div>
+  </section>
+
+  <section id="modelDetails" class="details card hidden">
+    <div class="details-head">
       <div>
-        <div class="eyebrow">MI UBICACIÓN</div>
-        <h1 id="location">Buscando ubicación…</h1>
-        <div class="updated" id="updated">Esperando datos…</div>
+        <div class="eyebrow">COMPARACIÓN</div>
+        <h2>Modelos meteorológicos</h2>
       </div>
-      <div class="status" id="status">GPS</div>
-    </header>
-    <section class="hero card">
-      <div class="weather-icon" id="weatherIcon">🌤️</div>
-      <div class="hero-main">
-        <div class="condition" id="condition">Cargando clima…</div>
-        <div class="temperature"><span id="temperature">—</span><sup>°</sup></div>
-        <div class="feels">Sensación térmica <strong id="apparent">—</strong>°</div>
-      </div>
-    </section>
-    <section class="metrics">
-      <div class="metric card"><span>🌧️ Precipitación</span><strong id="rain">—</strong></div>
-      <div class="metric card"><span>💧 Humedad</span><strong id="humidity">—</strong></div>
-    </section>
+      <button id="closeDetails" class="close" type="button">×</button>
+    </div>
+    <div id="modelCards" class="model-cards"></div>
+    <div class="details-note">
+      La etiqueta de consenso se calcula agrupando la temperatura actual dentro de una tolerancia de ±1 °C.
+      En esta etapa se comparan ECMWF, GFS e ICON. SMN WRF se incorporará en la próxima fase.
+    </div>
+  </section>
 
-    <section class="model-badge">
-      <span class="dot"></span>
-      <div>
-        <strong>Modelo actual: ECMWF</strong>
-        <small>IFS HRES · resolución nativa 9 km</small>
-      </div>
-    </section>
+  <section class="card technical">
+    <h2>Datos de la consulta</h2>
+    <div class="coords">
+      <div><span>Latitud</span><strong id="lat">—</strong></div>
+      <div><span>Longitud</span><strong id="lon">—</strong></div>
+      <div><span>Precisión GPS</span><strong id="accuracy">—</strong></div>
+    </div>
+  </section>
 
-    <section class="section">
-      <div class="section-title">
-        <h2>Próximas horas</h2>
-        <span>6 horas</span>
-      </div>
-      <div id="hourly" class="hourly"></div>
-    </section>
-
-    <section class="section">
-      <div class="section-title">
-        <h2>Próximos 7 días</h2>
-        <span>ECMWF</span>
-      </div>
-      <div id="daily" class="daily"></div>
-    </section>
-
-    <section class="card technical">
-      <h2>Datos de la consulta</h2>
-      <div class="coords">
-        <div><span>Latitud</span><strong id="lat">—</strong></div>
-        <div><span>Longitud</span><strong id="lon">—</strong></div>
-        <div><span>Precisión GPS</span><strong id="accuracy">—</strong></div>
-      </div>
-    </section>
-
-    <button id="retry" class="primary" type="button">Actualizar clima</button>
-    <section id="message" class="message" role="status">
-      Obteniendo ubicación y pronóstico ECMWF…
-    </section>
-  </main>
-  <script src="app.js?v=12"></script>
+  <button id="retry" class="primary" type="button">Actualizar clima</button>
+  <section id="message" class="message" role="status">Obteniendo ubicación…</section>
+</main>
+<script src="app.js?v=2"></script>
 </body>
 </html>
