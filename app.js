@@ -416,3 +416,34 @@ function setDetails(open){
 els.consensusBadge.addEventListener('click',()=>setDetails(els.modelDetails.classList.contains('hidden')));
 els.closeDetails.addEventListener('click',()=>setDetails(false));
 loadWeather();
+
+// PWA: registro del Service Worker + instalación Android
+let deferredInstallPrompt = null;
+const installApp = document.getElementById('installApp');
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(err => console.warn('SW:', err));
+  });
+}
+
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  if (installApp) installApp.classList.remove('hidden');
+});
+
+if (installApp) {
+  installApp.addEventListener('click', async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    installApp.classList.add('hidden');
+  });
+}
+
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  if (installApp) installApp.classList.add('hidden');
+});
