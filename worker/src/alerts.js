@@ -184,6 +184,7 @@ function eventForModel(model,hour){
   const code=Number(hour.code);
   const precip=Number(hour.precip||0);
   const gust=Number(hour.gust||0);
+  if(model==="SMN") return precip>=10;
   const thunder=code>=95;
   const severeCombo=(precip>=10 && gust>=50) || precip>=20;
   return thunder || severeCombo;
@@ -219,7 +220,7 @@ function smnSeries(data){
     time:d.validTime,
     code:0,
     precip:Number(d.precipitation??0),
-    gust:Number(d.windSpeed??0)*3.6
+    gust:0
   }));
 }
 
