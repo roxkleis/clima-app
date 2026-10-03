@@ -1,4 +1,4 @@
-// Clima by richardspulgar · consensus engine v10 · observación SMN + consenso probabilístico
+// Clima by richardspulgar · consensus engine v11 · observación SMN + consenso probabilístico
 const MODELS = {
   ecmwf: {name:"ECMWF", flag:"🇪🇺", label:"IFS HRES · 9 km", endpoint:"https://api.open-meteo.com/v1/ecmwf"},
   gfs:   {name:"GFS",   flag:"🇺🇸", label:"NOAA GFS Global · ~13 km", endpoint:"https://api.open-meteo.com/v1/gfs"},
@@ -271,12 +271,30 @@ function renderModelDetails(snaps,consensus){
   }
 }
 
+function observationWeatherInfo(observation){
+  if(!observation) return null;
+  const cloud=Number(observation.cloudCover);
+  if(Number.isFinite(cloud)){
+    if(cloud <= 10) return ["☀️","Despejado"];
+    if(cloud <= 50) return ["⛅","Parcialmente nublado"];
+    if(cloud <= 85) return ["☁️","Nublado"];
+    return ["☁️","Cubierto"];
+  }
+  const text=String(observation.presentWeather||'').toLowerCase();
+  if(text.includes('thunder') || text.includes('torment')) return ["⛈️","Tormenta"];
+  if(text.includes('rain') || text.includes('lluv')) return ["🌧️","Lluvia"];
+  if(text.includes('drizzle') || text.includes('lloviz')) return ["🌦️","Llovizna"];
+  if(text.includes('fog') || text.includes('niebla')) return ["🌫️","Niebla"];
+  return null;
+}
+
 function renderMain(items,position,placeName=null,observation=null){
   const smn=items.find(x=>x.key==='smn');
   const targetIso=smn?.data?.data?.[0]?.validTime || null;
   const snaps=items.map(x=>currentSnapshot(x,targetIso));
   const c=consensusFor(snaps);
-  const [icon,condition]=weatherInfo(consensusWeatherCode(snaps));
+  const observedCondition=observationWeatherInfo(observation);
+  const [icon,condition]=observedCondition || weatherInfo(consensusWeatherCode(snaps));
 
   els.location.textContent=placeName || 'Mi ubicación';
   els.updated.textContent=`Actualizado ${new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}`;
@@ -288,7 +306,7 @@ function renderMain(items,position,placeName=null,observation=null){
   const observed=observation && Number.isFinite(observation.temp);
   els.temperature.textContent=observed ? Math.round(observation.temp) : (Number.isFinite(c.temp)?Math.round(c.temp):'—');
   els.apparent.textContent=observed
-    ? Math.round(apparentSMN(observation.temp,observation.humidity,null) ?? observation.temp)
+    ? Math.round(apparentSMN(observation.temp,observation.humidity,observation.windSpeed) ?? observation.temp)
     : (Number.isFinite(c.apparent)?Math.round(c.apparent):'—');
   els.rain.textContent=`${c.precipitation.toFixed(1)} mm`;
   els.humidity.textContent=observed && Number.isFinite(observation.humidity)
@@ -297,8 +315,12 @@ function renderMain(items,position,placeName=null,observation=null){
 
   if(els.observation){
     if(observed){
+      const observationTime=new Date(observation.time);
+      const clock=Number.isNaN(observationTime.getTime())
+        ? ''
+        : observationTime.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
       const age=observation.ageMinutes<1 ? 'ahora' : `hace ${Math.round(observation.ageMinutes)} min`;
-      els.observation.textContent=`📍 Observación SMN · ${observation.station.name} · ${age} · ${observation.station.distanceKm.toFixed(1)} km`;
+      els.observation.textContent=`📍 Observación SMN · ${observation.station.name} · ${clock} · ${age} · ${observation.station.distanceKm.toFixed(1)} km`;
       els.observation.classList.remove('fallback');
     }else{
       els.observation.textContent='🔮 Temperatura actual estimada por modelos · sin observación SMN reciente';
