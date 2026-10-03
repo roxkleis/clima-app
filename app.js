@@ -115,7 +115,10 @@ function currentSnapshot(item,targetIso=null){
 }
 
 function clusters(values,tolerance=1){
-  const sorted=[...values].sort((a,b)=>a.temp-b.temp);
+  // El consenso se calcula sobre la temperatura mostrada (entera),
+  // para que 14°, 15° y 16° formen el mismo grupo dentro de ±1 °C.
+  const normalized=values.map(x=>({...x,consensusTemp:Math.round(x.temp)}));
+  const sorted=[...normalized].sort((a,b)=>a.consensusTemp-b.consensusTemp);
 
   // Un grupo es coherente si todos sus valores caben dentro de
   // una ventana de ±tolerance alrededor de un valor central.
@@ -128,7 +131,7 @@ function clusters(values,tolerance=1){
     for(let i=0;i<remaining.length;i++){
       const candidate=[];
       for(let j=i;j<remaining.length;j++){
-        if(remaining[j].temp - remaining[i].temp <= tolerance*2){
+        if(remaining[j].consensusTemp - remaining[i].consensusTemp <= tolerance*2){
           candidate.push(remaining[j]);
         }else{
           break;
