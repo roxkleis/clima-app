@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#159cf5"/><stop offset=".55" stop-color="#0864e8"/><stop offset="1" stop-color="#0639a9"/></linearGradient>
+  <linearGradient id="sun" x1=".2" y1=".1" x2=".8" y2=".9"><stop stop-color="#fff200"/><stop offset="1" stop-color="#ff9d00"/></linearGradient>
+  <linearGradient id="cloud" x1=".2" y1="0" x2=".8" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#b8d8ff"/></linearGradient>
+  <linearGradient id="bolt" x1=".2" y1="0" x2=".8" y2="1"><stop stop-color="#fff000"/><stop offset="1" stop-color="#ff9900"/></linearGradient>
+  <linearGradient id="drop" x1=".2" y1="0" x2=".8" y2="1"><stop stop-color="#5cecff"/><stop offset="1" stop-color="#00a9ee"/></linearGradient>
+</defs>
+<rect x="8" y="8" width="496" height="496" rx="105" fill="url(#bg)"/>
+<circle cx="207" cy="151" r="83" fill="url(#sun)"/>
+<g stroke="#ffd900" stroke-width="18" stroke-linecap="round">
+<path d="M207 45v-18M111 80L98 67M94 151H75M111 222l-13 13M303 80l13-13M320 151h19"/>
+</g>
+<g fill="url(#cloud)">
+<ellipse cx="280" cy="175" rx="93" ry="66"/>
+<ellipse cx="202" cy="218" rx="84" ry="58"/>
+<ellipse cx="337" cy="218" rx="85" ry="58"/>
+<rect x="142" y="218" width="273" height="70" rx="35"/>
+</g>
+<path d="M256 236h71l-53 70h52l-100 120 29-86h-45z" fill="url(#bolt)"/>
+<path d="M347 302c-18 24-27 40-27 52 0 22 17 39 38 39s38-17 38-39c0-12-10-28-28-52z" fill="url(#drop)"/>
+<path d="M401 324c-14 20-21 32-21 42 0 17 13 30 29 30s29-13 29-30c0-10-7-22-21-42z" fill="url(#drop)"/>
+<g fill="#fff" font-family="Arial,Helvetica,sans-serif" font-weight="800" font-size="92" letter-spacing="-5">
+<text x="74" y="445">Clima</text>
+</g>
+<circle cx="190" cy="372" r="7" fill="#ffd900"/>
+</svg>
