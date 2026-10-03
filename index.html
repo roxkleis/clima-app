@@ -27,6 +27,7 @@
       <div class="condition" id="condition">Cargando consenso…</div>
       <div class="temperature"><span id="temperature">—</span><sup>°</sup></div>
       <div class="feels">Sensación térmica <strong id="apparent">—</strong>°</div>
+    <div class="observation" id="observation">Buscando observación SMN…</div>
     </div>
   </section>
 
@@ -54,8 +55,8 @@
     </div>
     <div id="modelCards" class="model-cards"></div>
     <div class="details-note">
-      El consenso agrupa la temperatura actual dentro de una tolerancia de ±1 °C.
-      SMN WRF aporta el modelo local de 4 km; para la sensación térmica se usa un cálculo derivado cuando SMN no la publica directamente.
+      La temperatura principal corresponde a la observación de la estación SMN más cercana cuando existe un dato reciente.
+      El consenso se utiliza para el pronóstico y agrupa los modelos dentro de ±1 °C. SMN WRF aporta el modelo local de 4 km.
     </div>
   </section>
 
@@ -105,6 +106,6 @@
   <button id="retry" class="primary" type="button">Actualizar clima</button>
   <section id="message" class="message" role="status">Obteniendo ubicación…</section>
 </main>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
