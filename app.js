@@ -403,7 +403,7 @@ function renderMain(items,position,placeName=null,observation=null){
   }
 
   const dispersion=c.overallRange;
-  els.consensusSub.textContent=`${Math.round(c.temp)}° · confianza ${c.confidence} · dispersión ${dispersion}° · ${snaps.map(s=>s.name).join(' · ')}`;
+  els.consensusSub.textContent=`Pronóstico · ${Math.round(c.temp)}° · confianza ${c.confidence} · dispersión ${dispersion}° · ${snaps.map(s=>s.name).join(' · ')}`;
   els.consensusBadge.classList.toggle('warn',c.confidence!=='alta');
   els.consensusBadge.classList.toggle('split',c.split22);
 
