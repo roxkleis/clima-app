@@ -36,9 +36,8 @@ function pointInPolygon(lat,lon,poly){
 }
 function parseCap(xml){
   const alerts = [];
-  const blocks = /<alert\b[\s\S]*?<\/alert>/gi.test(xml)
-    ? [xml.match(/<alert\b[\s\S]*?<\/alert>/gi)?.[0] || xml]
-    : [xml];
+  const matches = xml.match(/<alert\b[\s\S]*?<\/alert>/gi);
+  const blocks = matches?.length ? matches : [xml];
 
   for(const block of blocks){
     const identifier=firstTag(block,"identifier","");
