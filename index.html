@@ -84,10 +84,27 @@
     </div>
   </section>
 
+  <section class="notifications card" id="notifications">
+    <div class="notifications-head">
+      <div>
+        <div class="eyebrow">NOTIFICACIONES</div>
+        <h2>Alertas meteorológicas</h2>
+        <p id="notificationStatus">Recibí alertas importantes del SMN y eventos meteorológicos.</p>
+      </div>
+      <span id="notificationState" class="notification-state">OFF</span>
+    </div>
+    <button id="enableNotifications" class="notification-button" type="button">🔔 Activar alertas</button>
+    <div id="notificationOptions" class="notification-options hidden">
+      <label><input id="alertsSmn" type="checkbox" checked> Alertas oficiales SMN</label>
+      <label><input id="alertsStorm" type="checkbox" checked> Tormentas importantes</label>
+      <label><input id="dailySummary" type="checkbox" checked> Resumen diario</label>
+    </div>
+  </section>
+
   <button id="installApp" class="install-app hidden" type="button">📲 Instalar Clima</button>
   <button id="retry" class="primary" type="button">Actualizar clima</button>
   <section id="message" class="message" role="status">Obteniendo ubicación…</section>
 </main>
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>
