@@ -5,3 +5,12 @@ compatibility_date = "2026-10-03"
 [[r2_buckets]]
 binding = "SMN_DATA"
 bucket_name = "clima-consenso-smn"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "clima-consenso-notifications"
+database_id = "7906c303-75f1-4456-b5ba-0c676ba802c2"
+
+[vars]
+VAPID_SUBJECT = "mailto:richardspulgar@gmail.com"
+VAPID_PUBLIC_KEY = "BIJUCD53Bb8gvKSOP6zL5NrWmn9JtCaR_WQlHaaRkWNWWj_kpo89ENLdx5BeIbLrjowXdFisG64-QojkTmwIaRY"
