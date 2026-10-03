@@ -1,5 +1,5 @@
-const CACHE = "clima-consenso-v4";
-const ASSETS = ["./icons/icon.svg","./","./index.html","./styles.css?v=6","./app.js?v=13","./manifest.json?v=2"];
+const CACHE = "clima-consenso-v5";
+const ASSETS = ["./icons/icon.svg","./","./index.html","./styles.css?v=6","./app.js?v=15","./manifest.json?v=2"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
@@ -17,7 +17,10 @@ self.addEventListener("activate", event => {
 
 self.addEventListener("fetch", event => {
   const url = new URL(event.request.url);
-  if (url.hostname === "api.open-meteo.com") return;
+  if (
+    url.hostname === "api.open-meteo.com" ||
+    url.hostname === "clima-consenso-smn.roxkleis.workers.dev"
+  ) return;
 
   event.respondWith(
     fetch(event.request)
