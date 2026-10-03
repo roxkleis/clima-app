@@ -1,4 +1,4 @@
-const CACHE = "clima-consenso-v1-4";
+const CACHE = "clima-consenso-v1-5";
 const ASSETS = ["./","./index.html","./styles.css","./app.js?v=7","./manifest.json"];
 
 self.addEventListener("install", event => {
