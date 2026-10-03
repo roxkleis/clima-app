@@ -196,8 +196,8 @@ function renderMain(items,position){
   els.lon.textContent=position.coords.longitude.toFixed(6);
   els.accuracy.textContent=`${Math.round(position.coords.accuracy)} m`;
 
-  els.consensusTitle.textContent=`Consenso ${c.count} de ${c.total}`;
-  els.consensusSub.textContent=`${snaps.map(s=>s.name).join(' · ')} · temperatura ±1 °C`;
+  els.consensusTitle.textContent=(c.total===4 && c.count===2 && c.groups.length===2 && c.groups[0].length===2 && c.groups[1].length===2) ? 'Consenso dividido 2/2' : `Consenso ${c.count} de ${c.total}`;
+  els.consensusSub.textContent=`${snaps.map(s=>s.name).join(' · ')} · temperatura ±1 °C`; 
   els.consensusBadge.classList.toggle('warn',c.count<c.total && !(c.count===2 && c.total===4));
   els.consensusBadge.classList.toggle('split',c.count===2 && c.total===4);
 
