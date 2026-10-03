@@ -1,4 +1,4 @@
-// Clima by richardspulgar · consensus engine v9 · 14/15/16 => 3/4
+// Clima by richardspulgar · consensus engine v10 · observación SMN + consenso probabilístico
 const MODELS = {
   ecmwf: {name:"ECMWF", flag:"🇪🇺", label:"IFS HRES · 9 km", endpoint:"https://api.open-meteo.com/v1/ecmwf"},
   gfs:   {name:"GFS",   flag:"🇺🇸", label:"NOAA GFS Global · ~13 km", endpoint:"https://api.open-meteo.com/v1/gfs"},
@@ -8,7 +8,7 @@ const MODELS = {
 
 const $ = id => document.getElementById(id);
 const els = {
-  location:$('location'),updated:$('updated'),status:$('status'),icon:$('weatherIcon'),condition:$('condition'),
+  location:$('location'),updated:$('updated'),status:$('status'),icon:$('weatherIcon'),condition:$('condition'),observation:$('observation'),
   temperature:$('temperature'),apparent:$('apparent'),rain:$('rain'),humidity:$('humidity'),
   hourly:$('hourly'),daily:$('daily'),lat:$('lat'),lon:$('lon'),accuracy:$('accuracy'),
   message:$('message'),retry:$('retry'),consensusBadge:$('consensusBadge'),
@@ -104,6 +104,84 @@ function currentIndex(data,targetIso=null){
   return idx;
 }
 
+const SMN_OBS_API='https://w2b.smn.gov.ar/oapi';
+const SMN_OBS_COLLECTION='urn:wmo:md:ar-smn:autosmn';
+const SMN_STATIONS_COLLECTION='stations';
+
+function haversineKm(lat1,lon1,lat2,lon2){
+  const R=6371;
+  const p1=lat1*Math.PI/180, p2=lat2*Math.PI/180;
+  const dp=(lat2-lat1)*Math.PI/180, dl=(lon2-lon1)*Math.PI/180;
+  const a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+
+async function fetchJsonWithTimeout(url,timeoutMs=12000){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    const r=await fetch(url,{cache:'no-store',signal:controller.signal});
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  }finally{clearTimeout(timer);}
+}
+
+async function fetchNearestSMNObservation(lat,lon){
+  const stationUrl=`${SMN_OBS_API}/collections/${SMN_STATIONS_COLLECTION}/items?f=json&limit=200`;
+  const stationData=await fetchJsonWithTimeout(stationUrl);
+  const stations=(stationData.features||[])
+    .map(f=>{
+      const c=f.geometry?.coordinates;
+      const p=f.properties||{};
+      if(!Array.isArray(c)||c.length<2) return null;
+      return {
+        id:p.id||f.id,
+        name:p.name||'Estación SMN',
+        lon:Number(c[0]),lat:Number(c[1]),
+        status:p.status
+      };
+    })
+    .filter(s=>s && Number.isFinite(s.lat) && Number.isFinite(s.lon) && s.status!=='standBy')
+    .map(s=>({...s,distanceKm:haversineKm(lat,lon,s.lat,s.lon)}))
+    .sort((a,b)=>a.distanceKm-b.distanceKm);
+
+  if(!stations.length) throw new Error('SMN sin estaciones georreferenciadas');
+
+  // Probamos las tres estaciones más cercanas: una estación puede estar
+  // operativa en el catálogo pero no haber reportado recientemente.
+  for(const station of stations.slice(0,3)){
+    const params=new URLSearchParams({
+      f:'json',
+      limit:'1',
+      sortby:'-reportTime',
+      wigos_station_identifier:station.id,
+      name:'air_temperature'
+    });
+    try{
+      const data=await fetchJsonWithTimeout(`${SMN_OBS_API}/collections/${encodeURIComponent(SMN_OBS_COLLECTION)}/items?${params.toString()}`);
+      const feature=data.features?.[0];
+      const p=feature?.properties||{};
+      const temp=Number(p.value);
+      const reportTime=p.reportTime || p.phenomenonTime;
+      if(!Number.isFinite(temp)||!reportTime) continue;
+
+      const ageMinutes=(Date.now()-new Date(reportTime).getTime())/60000;
+      if(ageMinutes>180) continue;
+
+      return {
+        station,
+        temp,
+        time:reportTime,
+        ageMinutes:Math.max(0,ageMinutes)
+      };
+    }catch(error){
+      console.warn('SMN observación',station.name,error);
+    }
+  }
+
+  throw new Error('No hay una observación SMN reciente cerca de la ubicación.');
+}
+
 function apparentSMN(tempC,rh,windMs){
   if(!Number.isFinite(tempC)) return null;
   if(Number.isFinite(windMs) && tempC <= 10 && windMs > 1.34){
@@ -177,12 +255,29 @@ function clusters(values,tolerance=1){
   return groups;
 }
 
+function median(values){
+  const sorted=[...values].sort((a,b)=>a-b);
+  if(!sorted.length) return null;
+  const mid=Math.floor(sorted.length/2);
+  return sorted.length%2 ? sorted[mid] : (sorted[mid-1]+sorted[mid])/2;
+}
+
 function consensusFor(snaps){
   const usable=snaps.filter(s=>Number.isFinite(s.temp));
   const groups=clusters(usable,1);
   const main=groups[0] || [];
   const count=main.length;
-  const mean=main.length ? main.reduce((s,x)=>s+x.temp,0)/count : null;
+  const mainRange=main.length ? Math.max(...main.map(x=>Math.round(x.temp)))-Math.min(...main.map(x=>Math.round(x.temp))) : Infinity;
+  const overallRange=usable.length ? Math.max(...usable.map(x=>Math.round(x.temp)))-Math.min(...usable.map(x=>Math.round(x.temp))) : Infinity;
+  const strongMajority=count>=3;
+  const hasFullConsensus=count===usable.length;
+  const split22=usable.length===4 && groups.length===2 && groups[0].length===2 && groups[1].length===2;
+  // Si no existe una mayoría clara, usamos la mediana de todos los modelos
+  // para evitar que el resultado dependa del orden de llegada de las APIs.
+  const consensusTemp=strongMajority
+    ? main.reduce((s,x)=>s+x.temp,0)/count
+    : median(usable.map(x=>x.temp));
+  const mean=consensusTemp;
   const apparentVals=main.filter(x=>Number.isFinite(x.apparent));
   const humidityVals=main.filter(x=>Number.isFinite(x.humidity));
   const precipVals=main.filter(x=>Number.isFinite(x.precipitation));
@@ -192,8 +287,14 @@ function consensusFor(snaps){
   const codeVals=main.filter(x=>Number.isFinite(x.code));
   const code=codeVals.length ? codeVals[0].code : 0;
   const members=new Set(main.map(x=>x.key));
-  const split22 = usable.length === 4 && groups.length === 2 && groups[0].length === 2 && groups[1].length === 2;
-  return {groups,main,count,total:usable.length,temp:mean,apparent,humidity,precipitation:precip,code,members,split22};
+  let confidence='débil';
+  if(hasFullConsensus) confidence='alta';
+  else if(strongMajority && mainRange<=2) confidence='media';
+  else if(count>=2 && mainRange<=2) confidence='baja';
+  return {
+    groups,main,count,total:usable.length,temp:mean,apparent,humidity,precipitation:precip,code,
+    members,split22,mainRange,overallRange,confidence,hasMajority:strongMajority
+  };
 }
 
 
@@ -239,7 +340,7 @@ function renderModelDetails(snaps,consensus){
   }
 }
 
-function renderMain(items,position,placeName=null){
+function renderMain(items,position,placeName=null,observation=null){
   const smn=items.find(x=>x.key==='smn');
   const targetIso=smn?.data?.data?.[0]?.validTime || null;
   const snaps=items.map(x=>currentSnapshot(x,targetIso));
@@ -251,18 +352,46 @@ function renderMain(items,position,placeName=null){
   els.status.textContent=`${items.length} MODELOS OK`;
   els.icon.textContent=icon;
   els.condition.textContent=condition;
-  els.temperature.textContent=Number.isFinite(c.temp)?Math.round(c.temp):'—';
-  els.apparent.textContent=Number.isFinite(c.apparent)?Math.round(c.apparent):'—';
+  // AHORA: observación meteorológica real de la estación SMN más cercana.
+  // Si no hay una observación reciente, se conserva el consenso como fallback.
+  const observed=observation && Number.isFinite(observation.temp);
+  els.temperature.textContent=observed ? Math.round(observation.temp) : (Number.isFinite(c.temp)?Math.round(c.temp):'—');
+  els.apparent.textContent=observed
+    ? Math.round(apparentSMN(observation.temp,observation.humidity,null) ?? observation.temp)
+    : (Number.isFinite(c.apparent)?Math.round(c.apparent):'—');
   els.rain.textContent=`${c.precipitation.toFixed(1)} mm`;
-  els.humidity.textContent=Number.isFinite(c.humidity)?`${Math.round(c.humidity)}%`:'—';
+  els.humidity.textContent=observed && Number.isFinite(observation.humidity)
+    ? `${Math.round(observation.humidity)}%`
+    : (Number.isFinite(c.humidity)?`${Math.round(c.humidity)}%`:'—');
+
+  if(els.observation){
+    if(observed){
+      const age=observation.ageMinutes<1 ? 'ahora' : `hace ${Math.round(observation.ageMinutes)} min`;
+      els.observation.textContent=`📍 Observación SMN · ${observation.station.name} · ${age} · ${observation.station.distanceKm.toFixed(1)} km`;
+      els.observation.classList.remove('fallback');
+    }else{
+      els.observation.textContent='🔮 Temperatura actual estimada por modelos · sin observación SMN reciente';
+      els.observation.classList.add('fallback');
+    }
+  }
   els.lat.textContent=position.coords.latitude.toFixed(6);
   els.lon.textContent=position.coords.longitude.toFixed(6);
   els.accuracy.textContent=`${Math.round(position.coords.accuracy)} m`;
 
-  els.consensusTitle.textContent=(c.total===4 && c.count===2 && c.groups.length===2 && c.groups[0].length===2 && c.groups[1].length===2) ? 'Consenso dividido 2/2' : `Consenso ${c.count} de ${c.total}`;
-  els.consensusSub.textContent=`${snaps.map(s=>s.name).join(' · ')} · temperatura ±1 °C`; 
-  els.consensusBadge.classList.toggle('warn',c.count<c.total && !(c.count===2 && c.total===4));
-  els.consensusBadge.classList.toggle('split',c.count===2 && c.total===4);
+  if(c.split22){
+    els.consensusTitle.textContent='Consenso dividido 2/2';
+  }else if(c.count>=3){
+    els.consensusTitle.textContent=`Consenso ${c.count} de ${c.total}`;
+  }else if(c.count===2){
+    els.consensusTitle.textContent=`Consenso parcial 2 de ${c.total}`;
+  }else{
+    els.consensusTitle.textContent='Sin consenso mayoritario';
+  }
+
+  const dispersion=c.overallRange;
+  els.consensusSub.textContent=`${Math.round(c.temp)}° · confianza ${c.confidence} · dispersión ${dispersion}° · ${snaps.map(s=>s.name).join(' · ')}`;
+  els.consensusBadge.classList.toggle('warn',c.confidence!=='alta');
+  els.consensusBadge.classList.toggle('split',c.split22);
 
   renderModelDetails(snaps,c);
   renderHourly(items);
@@ -422,7 +551,14 @@ async function loadWeather(){
     }catch(error){
       console.warn('Reverse geocoding:',error);
     }
-    setMessage('Ubicación obtenida. Consultando SMN, ECMWF, GFS e ICON…');
+    setMessage('Ubicación obtenida. Consultando observación SMN y modelos…');
+
+    let observation=null;
+    try{
+      observation=await fetchNearestSMNObservation(lat,lon);
+    }catch(error){
+      console.warn('Observación SMN:',error);
+    }
 
     const requests=[
       fetchOpenMeteo('ecmwf',lat,lon),
@@ -437,7 +573,7 @@ async function loadWeather(){
       setMessage('Ningún modelo respondió. Revisá la conexión e intentá nuevamente.');
       return;
     }
-    renderMain(ok,position,placeName);
+    renderMain(ok,position,placeName,observation);
   }catch(error){
     showGpsError(error);
   }
