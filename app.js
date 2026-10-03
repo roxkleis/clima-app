@@ -1,17 +1,18 @@
 const MODELS = {
   ecmwf: {name:"ECMWF", flag:"🇪🇺", label:"IFS HRES · 9 km", endpoint:"https://api.open-meteo.com/v1/ecmwf"},
   gfs:   {name:"GFS",   flag:"🇺🇸", label:"NOAA GFS Global · ~13 km", endpoint:"https://api.open-meteo.com/v1/gfs"},
-  icon:  {name:"ICON",  flag:"🇩🇪", label:"DWD ICON Global · ~11 km", endpoint:"https://api.open-meteo.com/v1/dwd-icon"}
+  icon:  {name:"ICON",  flag:"🇩🇪", label:"DWD ICON Global · ~11 km", endpoint:"https://api.open-meteo.com/v1/dwd-icon"},
+  smn:   {name:"SMN",   flag:"🇦🇷", label:"WRF Argentina · 4 km", endpoint:"https://clima-consenso-smn.roxkleis.workers.dev/forecast"}
 };
 
 const $ = id => document.getElementById(id);
 const els = {
-  location:$("location"),updated:$("updated"),status:$("status"),icon:$("weatherIcon"),condition:$("condition"),
-  temperature:$("temperature"),apparent:$("apparent"),rain:$("rain"),humidity:$("humidity"),
-  hourly:$("hourly"),daily:$("daily"),lat:$("lat"),lon:$("lon"),accuracy:$("accuracy"),
-  message:$("message"),retry:$("retry"),consensusBadge:$("consensusBadge"),
-  consensusTitle:$("consensusTitle"),consensusSub:$("consensusSub"),modelDetails:$("modelDetails"),
-  modelCards:$("modelCards"),closeDetails:$("closeDetails")
+  location:$('location'),updated:$('updated'),status:$('status'),icon:$('weatherIcon'),condition:$('condition'),
+  temperature:$('temperature'),apparent:$('apparent'),rain:$('rain'),humidity:$('humidity'),
+  hourly:$('hourly'),daily:$('daily'),lat:$('lat'),lon:$('lon'),accuracy:$('accuracy'),
+  message:$('message'),retry:$('retry'),consensusBadge:$('consensusBadge'),
+  consensusTitle:$('consensusTitle'),consensusSub:$('consensusSub'),modelDetails:$('modelDetails'),
+  modelCards:$('modelCards'),closeDetails:$('closeDetails')
 };
 
 const weatherMap = {
@@ -25,29 +26,29 @@ const weatherMap = {
   95:["⛈️","Tormenta"],96:["⛈️","Tormenta con granizo"],99:["⛈️","Tormenta fuerte"]
 };
 const weatherInfo = code => weatherMap[code] || ["🌤️","Condición variable"];
-const fmtHour = iso => new Intl.DateTimeFormat("es-AR",{hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date(iso));
-const fmtDay = iso => new Intl.DateTimeFormat("es-AR",{weekday:"short",day:"2-digit"}).format(new Date(`${iso}T12:00:00`)).replace(".","");
+const fmtHour = iso => new Intl.DateTimeFormat('es-AR',{hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
+const fmtDay = iso => new Intl.DateTimeFormat('es-AR',{weekday:'short',day:'2-digit'}).format(new Date(`${iso}T12:00:00`)).replace('.','');
 const setMessage = text => els.message.textContent = text;
 
 function queryUrl(model, lat, lon){
   const hourly = [
-    "temperature_2m","relative_humidity_2m","apparent_temperature",
-    "precipitation","weather_code","wind_speed_10m","wind_gusts_10m"
+    'temperature_2m','relative_humidity_2m','apparent_temperature',
+    'precipitation','weather_code','wind_speed_10m','wind_gusts_10m'
   ];
-  if(model === "gfs" || model === "icon") hourly.push("precipitation_probability");
+  if(model === 'gfs' || model === 'icon') hourly.push('precipitation_probability');
   const params = new URLSearchParams({
-    latitude:lat, longitude:lon, hourly:hourly.join(","),
-    daily:"temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
-    timezone:"auto", forecast_days:"7"
+    latitude:lat, longitude:lon, hourly:hourly.join(','),
+    daily:'temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code',
+    timezone:'auto', forecast_days:'7'
   });
   return `${MODELS[model].endpoint}?${params.toString()}`;
 }
 
-async function fetchModel(model,lat,lon){
+async function fetchOpenMeteo(model,lat,lon){
   const controller = new AbortController();
   const timer = setTimeout(()=>controller.abort(),15000);
   try{
-    const r = await fetch(queryUrl(model,lat,lon),{cache:"no-store",signal:controller.signal});
+    const r = await fetch(queryUrl(model,lat,lon),{cache:'no-store',signal:controller.signal});
     if(!r.ok) throw new Error(`${model.toUpperCase()} HTTP ${r.status}`);
     const data = await r.json();
     if(!data.hourly?.time?.length) throw new Error(`${model.toUpperCase()} sin datos horarios`);
@@ -55,23 +56,60 @@ async function fetchModel(model,lat,lon){
   } finally { clearTimeout(timer); }
 }
 
-function currentIndex(data){
-  const now=Date.now(); let idx=0,best=Infinity;
+async function fetchSMN(lat,lon){
+  const controller = new AbortController();
+  const timer = setTimeout(()=>controller.abort(),15000);
+  try{
+    const url = `${MODELS.smn.endpoint}?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&hours=72`;
+    const r = await fetch(url,{cache:'no-store',signal:controller.signal});
+    if(!r.ok) throw new Error(`SMN HTTP ${r.status}`);
+    const data = await r.json();
+    if(!Array.isArray(data.data) || !data.data.length) throw new Error('SMN sin datos horarios');
+    return {key:'smn',data};
+  } finally { clearTimeout(timer); }
+}
+
+function currentIndex(data,targetIso=null){
+  const target = targetIso ? new Date(targetIso).getTime() : Date.now();
+  let idx=0,best=Infinity;
   data.hourly.time.forEach((t,i)=>{
-    const diff=Math.abs(new Date(t).getTime()-now);
+    const diff=Math.abs(new Date(t).getTime()-target);
     if(diff<best){best=diff;idx=i;}
   });
   return idx;
 }
 
-function currentSnapshot(item){
-  const h=item.data.hourly, i=currentIndex(item.data);
+function apparentSMN(tempC,rh,windMs){
+  if(!Number.isFinite(tempC)) return null;
+  if(Number.isFinite(windMs) && tempC <= 10 && windMs > 1.34){
+    const v=windMs*3.6;
+    return 13.12 + 0.6215*tempC - 11.37*Math.pow(v,0.16) + 0.3965*tempC*Math.pow(v,0.16);
+  }
+  if(Number.isFinite(rh) && tempC >= 27){
+    const T=tempC, R=rh;
+    const hi=-8.784695 + 1.61139411*T + 2.338549*R - 0.14611605*T*R - 0.012308094*T*T - 0.016424828*R*R + 0.002211732*T*T*R + 0.00072546*T*R*R - 0.000003582*T*T*R*R;
+    return (hi < T) ? T : hi;
+  }
+  return tempC;
+}
+
+function currentSnapshot(item,targetIso=null){
+  if(item.key === 'smn'){
+    const d=item.data.data[0];
+    return {
+      key:'smn',name:MODELS.smn.name,flag:MODELS.smn.flag,label:MODELS.smn.label,
+      time:d.validTime,temp:Number(d.temperature),apparent:apparentSMN(Number(d.temperature),Number(d.humidity),Number(d.windSpeed)),
+      humidity:Number(d.humidity),precipitation:Number(d.precipitation??0),probability:null,
+      code:null,wind:Number(d.windSpeed??0),gust:null
+    };
+  }
+  const h=item.data.hourly, i=currentIndex(item.data,targetIso);
   return {
-    key:item.key, name:MODELS[item.key].name, flag:MODELS[item.key].flag, label:MODELS[item.key].label,
-    time:h.time[i], temp:Number(h.temperature_2m[i]), apparent:Number(h.apparent_temperature[i]),
-    humidity:Number(h.relative_humidity_2m[i]), precipitation:Number(h.precipitation[i]??0),
+    key:item.key,name:MODELS[item.key].name,flag:MODELS[item.key].flag,label:MODELS[item.key].label,
+    time:h.time[i],temp:Number(h.temperature_2m[i]),apparent:Number(h.apparent_temperature[i]),
+    humidity:Number(h.relative_humidity_2m[i]),precipitation:Number(h.precipitation[i]??0),
     probability:h.precipitation_probability ? Number(h.precipitation_probability[i]) : null,
-    code:Number(h.weather_code[i]), wind:Number(h.wind_speed_10m?.[i]??0), gust:Number(h.wind_gusts_10m?.[i]??0)
+    code:Number(h.weather_code[i]),wind:Number(h.wind_speed_10m?.[i]??0),gust:Number(h.wind_gusts_10m?.[i]??0)
   };
 }
 
@@ -91,61 +129,77 @@ function clusters(values,tolerance=1){
 }
 
 function consensusFor(snaps){
-  const groups=clusters(snaps,1);
-  const main=groups[0];
+  const usable=snaps.filter(s=>Number.isFinite(s.temp));
+  const groups=clusters(usable,1);
+  const main=groups[0] || [];
   const count=main.length;
-  const mean=main.reduce((s,x)=>s+x.temp,0)/count;
-  const apparent=main.reduce((s,x)=>s+x.apparent,0)/count;
-  const humidity=main.reduce((s,x)=>s+x.humidity,0)/count;
-  const precip=main.reduce((s,x)=>s+x.precipitation,0)/count;
-  const code=main[0].code;
+  const mean=main.length ? main.reduce((s,x)=>s+x.temp,0)/count : null;
+  const apparentVals=main.filter(x=>Number.isFinite(x.apparent));
+  const humidityVals=main.filter(x=>Number.isFinite(x.humidity));
+  const precipVals=main.filter(x=>Number.isFinite(x.precipitation));
+  const apparent=apparentVals.length ? apparentVals.reduce((s,x)=>s+x.apparent,0)/apparentVals.length : null;
+  const humidity=humidityVals.length ? humidityVals.reduce((s,x)=>s+x.humidity,0)/humidityVals.length : null;
+  const precip=precipVals.length ? precipVals.reduce((s,x)=>s+x.precipitation,0)/precipVals.length : 0;
+  const codeVals=main.filter(x=>Number.isFinite(x.code));
+  const code=codeVals.length ? codeVals[0].code : 0;
   const members=new Set(main.map(x=>x.key));
-  return {groups,main,count,total:snaps.length,temp:mean,apparent,humidity,precipitation:precip,code,members};
+  return {groups,main,count,total:usable.length,temp:mean,apparent,humidity,precipitation:precip,code,members};
+}
+
+
+function consensusWeatherCode(snaps){
+  const codes=snaps.filter(s=>Number.isFinite(s.code)).map(s=>s.code);
+  if(!codes.length) return 0;
+  const counts=new Map();
+  for(const code of codes) counts.set(code,(counts.get(code)||0)+1);
+  return [...counts.entries()].sort((a,b)=>b[1]-a[1] || a[0]-b[0])[0][0];
 }
 
 function renderModelDetails(snaps,consensus){
-  els.modelCards.innerHTML="";
+  els.modelCards.innerHTML='';
   const mainSet=consensus.members;
   for(const s of snaps){
-    const card=document.createElement("div");
-    card.className=`model-card ${mainSet.has(s.key) ? "" : "outlier"}`;
+    const card=document.createElement('div');
+    card.className=`model-card ${mainSet.has(s.key) ? '' : 'outlier'}`;
     card.innerHTML=`
       <div class="model-top">
         <div class="model-name">${s.flag} ${s.name}</div>
-        <div class="model-tag">${mainSet.has(s.key) ? "Grupo principal" : "Diferencia"}</div>
+        <div class="model-tag">${mainSet.has(s.key) ? 'Grupo principal' : 'Diferencia'}</div>
       </div>
       <div class="model-values">
-        <div><span>Temperatura</span><strong>${Math.round(s.temp)}°</strong></div>
-        <div><span>Sensación</span><strong>${Math.round(s.apparent)}°</strong></div>
-        <div><span>Humedad</span><strong>${Math.round(s.humidity)}%</strong></div>
-        <div><span>Precipitación</span><strong>${s.precipitation.toFixed(1)} mm</strong></div>
+        <div><span>Temperatura</span><strong>${Number.isFinite(s.temp)?Math.round(s.temp)+'°':'—'}</strong></div>
+        <div><span>Sensación</span><strong>${Number.isFinite(s.apparent)?Math.round(s.apparent)+'°':'—'}</strong></div>
+        <div><span>Humedad</span><strong>${Number.isFinite(s.humidity)?Math.round(s.humidity)+'%':'—'}</strong></div>
+        <div><span>Precipitación</span><strong>${Number.isFinite(s.precipitation)?s.precipitation.toFixed(1)+' mm':'—'}</strong></div>
       </div>`;
     els.modelCards.appendChild(card);
   }
 }
 
 function renderMain(items,position){
-  const snaps=items.map(currentSnapshot);
+  const smn=items.find(x=>x.key==='smn');
+  const targetIso=smn?.data?.data?.[0]?.validTime || null;
+  const snaps=items.map(x=>currentSnapshot(x,targetIso));
   const c=consensusFor(snaps);
-  const [icon,condition]=weatherInfo(c.code);
+  const [icon,condition]=weatherInfo(consensusWeatherCode(snaps));
 
-  els.location.textContent="Mi ubicación";
-  els.updated.textContent=`Actualizado ${new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})}`;
+  els.location.textContent='Mi ubicación';
+  els.updated.textContent=`Actualizado ${new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}`;
   els.status.textContent=`${items.length} MODELOS OK`;
   els.icon.textContent=icon;
   els.condition.textContent=condition;
-  els.temperature.textContent=Math.round(c.temp);
-  els.apparent.textContent=Math.round(c.apparent);
+  els.temperature.textContent=Number.isFinite(c.temp)?Math.round(c.temp):'—';
+  els.apparent.textContent=Number.isFinite(c.apparent)?Math.round(c.apparent):'—';
   els.rain.textContent=`${c.precipitation.toFixed(1)} mm`;
-  els.humidity.textContent=`${Math.round(c.humidity)}%`;
+  els.humidity.textContent=Number.isFinite(c.humidity)?`${Math.round(c.humidity)}%`:'—';
   els.lat.textContent=position.coords.latitude.toFixed(6);
   els.lon.textContent=position.coords.longitude.toFixed(6);
   els.accuracy.textContent=`${Math.round(position.coords.accuracy)} m`;
 
   els.consensusTitle.textContent=`Consenso ${c.count} de ${c.total}`;
-  els.consensusSub.textContent=`${snaps.map(s=>s.name).join(" · ")} · temperatura ±1 °C`;
-  els.consensusBadge.classList.toggle("warn",c.count<c.total);
-  els.consensusBadge.classList.toggle("split",c.count===1 && c.total>1);
+  els.consensusSub.textContent=`${snaps.map(s=>s.name).join(' · ')} · temperatura ±1 °C`;
+  els.consensusBadge.classList.toggle('warn',c.count<c.total && !(c.count===2 && c.total===4));
+  els.consensusBadge.classList.toggle('split',c.count===2 && c.total===4);
 
   renderModelDetails(snaps,c);
   renderHourly(items);
@@ -153,91 +207,138 @@ function renderMain(items,position){
 
   const failed=Object.keys(MODELS).filter(k=>!items.some(x=>x.key===k));
   setMessage(failed.length
-    ? `Conectados: ${items.map(x=>MODELS[x.key].name).join(", ")}. Sin respuesta: ${failed.map(k=>MODELS[k].name).join(", ")}.`
-    : "ECMWF, GFS e ICON conectados correctamente. Próximo paso: integrar SMN WRF 4 km.");
+    ? `Conectados: ${items.map(x=>MODELS[x.key].name).join(', ')}. Sin respuesta: ${failed.map(k=>MODELS[k].name).join(', ')}.`
+    : 'SMN, ECMWF, GFS e ICON conectados correctamente.');
+}
+
+function findOpenMeteoIndexByTime(data, targetTime){
+  return currentIndex(data,targetTime);
 }
 
 function renderHourly(items){
-  const snapshots=items.map(currentSnapshot);
-  const base=items[0].data.hourly;
-  const idx=currentIndex(items[0].data);
-  els.hourly.innerHTML="";
+  const smn=items.find(x=>x.key==='smn');
+  const smnHours=smn?.data?.data || [];
+  const fallback=items.find(x=>x.key!=='smn');
+  const base=fallback?.data?.hourly;
+  els.hourly.innerHTML='';
+
   for(let off=0;off<6;off++){
-    const targetTime=base.time[idx+off]; if(!targetTime) break;
+    const targetTime=smnHours[off]?.validTime || (base ? base.time[currentIndex(fallback.data)] : null);
+    if(!targetTime) break;
     const vals=[];
+
     for(const item of items){
-      const h=item.data.hourly;
-      const j=h.time.indexOf(targetTime);
-      if(j>=0) vals.push({
-        temp:Number(h.temperature_2m[j]),
-        precip:Number(h.precipitation[j]??0),
-        code:Number(h.weather_code[j])
-      });
+      if(item.key==='smn'){
+        const d=smnHours[off];
+        if(d && Number.isFinite(Number(d.temperature))) vals.push({temp:Number(d.temperature),precip:Number(d.precipitation??0),code:null});
+      } else {
+        const h=item.data.hourly;
+        const j=findOpenMeteoIndexByTime(item.data,targetTime);
+        vals.push({temp:Number(h.temperature_2m[j]),precip:Number(h.precipitation[j]??0),code:Number(h.weather_code[j])});
+      }
     }
     if(!vals.length) continue;
-    const temp=vals.reduce((s,x)=>s+x.temp,0)/vals.length;
-    const precip=vals.reduce((s,x)=>s+x.precip,0)/vals.length;
-    const code=vals[Math.floor(vals.length/2)].code;
+    const groups=clusters(vals,1);
+    const main=groups[0] || vals;
+    const temp=main.reduce((s,x)=>s+x.temp,0)/main.length;
+    const precip=main.reduce((s,x)=>s+x.precip,0)/main.length;
+    const codeVals=main.filter(x=>Number.isFinite(x.code)).map(x=>x.code);
+    const code=codeVals.length ? codeVals[Math.floor(codeVals.length/2)] : 0;
     const [ico]=weatherInfo(code);
-    const el=document.createElement("div");
-    el.className=`hour ${off===0?"now":""}`;
-    el.innerHTML=`<div class="time">${off===0?"Ahora":fmtHour(targetTime)}</div><div class="icon">${ico}</div><div class="temp">${Math.round(temp)}°</div><div class="rain">💧 ${precip.toFixed(1)} mm</div>`;
+    const el=document.createElement('div');
+    el.className=`hour ${off===0?'now':''}`;
+    el.innerHTML=`<div class="time">${off===0?'Ahora':fmtHour(targetTime)}</div><div class="icon">${ico}</div><div class="temp">${Math.round(temp)}°</div><div class="rain">💧 ${precip.toFixed(1)} mm</div>`;
     els.hourly.appendChild(el);
   }
 }
 
+function smnDailyMap(smn){
+  const result=new Map();
+  for(const d of (smn?.data?.data || [])){
+    const day=d.validTime.slice(0,10);
+    const temp=Number(d.temperature);
+    if(!result.has(day)) result.set(day,{temps:[],precips:[],codes:[]});
+    const x=result.get(day);
+    if(Number.isFinite(temp)) x.temps.push(temp);
+    if(Number.isFinite(Number(d.precipitation))) x.precips.push(Number(d.precipitation));
+  }
+  return result;
+}
+
 function renderDaily(items){
-  const base=items[0].data.daily;
-  els.daily.innerHTML="";
+  const openItems=items.filter(x=>x.key!=='smn');
+  const base=openItems[0]?.data.daily;
+  const smn=items.find(x=>x.key==='smn');
+  const smnDays=smnDailyMap(smn);
+  els.daily.innerHTML='';
+  if(!base) return;
+
   for(let i=0;i<Math.min(7,base.time.length);i++){
+    const dayKey=base.time[i];
     const max=[],min=[],codes=[];
-    for(const item of items){
+    for(const item of openItems){
       const d=item.data.daily;
       max.push(Number(d.temperature_2m_max[i])); min.push(Number(d.temperature_2m_min[i])); codes.push(Number(d.weather_code[i]));
     }
-    const avgMax=max.reduce((s,v)=>s+v,0)/max.length;
-    const avgMin=min.reduce((s,v)=>s+v,0)/min.length;
-    const code=codes[Math.floor(codes.length/2)];
+
+    const smnDay=smnDays.get(dayKey);
+    if(smnDay?.temps?.length){
+      max.push(Math.max(...smnDay.temps));
+      min.push(Math.min(...smnDay.temps));
+    }
+
+    const maxGroups=clusters(max.map((temp,i)=>({key:i,temp})),1);
+    const minGroups=clusters(min.map((temp,i)=>({key:i,temp})),1);
+    const maxMain=maxGroups[0] || [];
+    const minMain=minGroups[0] || [];
+    const consensusMax=maxMain.length ? maxMain.reduce((s,x)=>s+x.temp,0)/maxMain.length : null;
+    const consensusMin=minMain.length ? minMain.reduce((s,x)=>s+x.temp,0)/minMain.length : null;
+    const code=codes.length ? codes[Math.floor(codes.length/2)] : 0;
     const [ico,desc]=weatherInfo(code);
-    const el=document.createElement("div");
-    el.className="day";
-    el.innerHTML=`<div class="name">${i===0?"Hoy":fmtDay(base.time[i])}</div><div class="icon">${ico}</div><div class="desc">${desc}</div><div class="max">${Math.round(avgMax)}°</div><div class="min">${Math.round(avgMin)}°</div>`;
+    const modelCount=smnDay?.temps?.length ? items.length : openItems.length;
+    const el=document.createElement('div');
+    el.className='day';
+    el.innerHTML=`<div class="name">${i===0?'Hoy':fmtDay(dayKey)}</div><div class="icon">${ico}</div><div class="desc">${desc} · ${modelCount} mod.</div><div class="max">${Math.round(consensusMax)}°</div><div class="min">${Math.round(consensusMin)}°</div>`;
     els.daily.appendChild(el);
   }
 }
 
 function showGpsError(error){
-  els.status.textContent="GPS";
-  setMessage({1:"Permiso de ubicación denegado. Habilitalo para este sitio.",2:"No fue posible determinar tu ubicación.",3:"La solicitud de ubicación tardó demasiado."}[error.code]||"No se pudo obtener la ubicación.");
+  els.status.textContent='GPS';
+  setMessage({1:'Permiso de ubicación denegado. Habilitalo para este sitio.',2:'No fue posible determinar tu ubicación.',3:'La solicitud de ubicación tardó demasiado.'}[error.code]||'No se pudo obtener la ubicación.');
 }
 
 async function loadWeather(){
-  els.status.textContent="BUSCANDO";
-  setMessage("Obteniendo ubicación y consultando ECMWF, GFS e ICON…");
+  els.status.textContent='BUSCANDO';
+  setMessage('Obteniendo ubicación y consultando SMN, ECMWF, GFS e ICON…');
   navigator.geolocation.getCurrentPosition(async position=>{
     els.lat.textContent=position.coords.latitude.toFixed(6);
     els.lon.textContent=position.coords.longitude.toFixed(6);
     els.accuracy.textContent=`${Math.round(position.coords.accuracy)} m`;
-    const results=await Promise.allSettled(Object.keys(MODELS).map(k=>fetchModel(k,position.coords.latitude,position.coords.longitude)));
-    const ok=results.filter(r=>r.status==="fulfilled").map(r=>r.value);
+
+    const lat=position.coords.latitude, lon=position.coords.longitude;
+    const requests=[
+      fetchOpenMeteo('ecmwf',lat,lon),
+      fetchOpenMeteo('gfs',lat,lon),
+      fetchOpenMeteo('icon',lat,lon),
+      fetchSMN(lat,lon)
+    ];
+    const results=await Promise.allSettled(requests);
+    const ok=results.filter(r=>r.status==='fulfilled').map(r=>r.value);
     if(!ok.length){
-      els.status.textContent="ERROR";
-      setMessage("Ningún modelo respondió. Revisá la conexión e intentá nuevamente.");
+      els.status.textContent='ERROR';
+      setMessage('Ningún modelo respondió. Revisá la conexión e intentá nuevamente.');
       return;
     }
     renderMain(ok,position);
   },showGpsError,{enableHighAccuracy:true,timeout:15000,maximumAge:300000});
 }
 
-els.retry.addEventListener("click",loadWeather);
+els.retry.addEventListener('click',loadWeather);
 function setDetails(open){
-  els.modelDetails.classList.toggle("hidden", !open);
-  els.consensusBadge.setAttribute("aria-expanded", String(open));
+  els.modelDetails.classList.toggle('hidden', !open);
+  els.consensusBadge.setAttribute('aria-expanded', String(open));
 }
-els.consensusBadge.addEventListener("click",()=>{
-  const open = els.modelDetails.classList.contains("hidden");
-  setDetails(open);
-});
-els.closeDetails.addEventListener("click",()=>setDetails(false));
-els.closeDetails.addEventListener("click",()=>els.modelDetails.classList.add("hidden"));
+els.consensusBadge.addEventListener('click',()=>setDetails(els.modelDetails.classList.contains('hidden')));
+els.closeDetails.addEventListener('click',()=>setDetails(false));
 loadWeather();
