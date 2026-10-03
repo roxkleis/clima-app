@@ -113,6 +113,116 @@ function corsHeaders(request) {
 }
 
 
+
+const SMN_OBS_API = "https://w2b.smn.gov.ar/oapi";
+const SMN_OBS_COLLECTION = "urn:wmo:md:ar-smn:autosmn";
+const SMN_STATIONS_COLLECTION = "stations";
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const p1 = lat1 * Math.PI / 180;
+  const p2 = lat2 * Math.PI / 180;
+  const dp = (lat2 - lat1) * Math.PI / 180;
+  const dl = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dp / 2) ** 2 +
+    Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+async function smnJson(url) {
+  const r = await fetch(url, {
+    headers: { "Accept": "application/geo+json, application/json" },
+  });
+  if (!r.ok) throw new Error(`SMN API HTTP ${r.status}`);
+  return await r.json();
+}
+
+async function getNearestSMNObservation(lat, lon) {
+  const stationUrl = `${SMN_OBS_API}/collections/${SMN_STATIONS_COLLECTION}/items?f=json&limit=200`;
+  const stationData = await smnJson(stationUrl);
+
+  const stations = (stationData.features || [])
+    .map((feature) => {
+      const coordinates = feature.geometry?.coordinates;
+      const properties = feature.properties || {};
+      const id = properties.wigos_station_identifier || properties.id || feature.id;
+      if (!Array.isArray(coordinates) || coordinates.length < 2 || !id) return null;
+      const stationLat = Number(coordinates[1]);
+      const stationLon = Number(coordinates[0]);
+      if (!Number.isFinite(stationLat) || !Number.isFinite(stationLon)) return null;
+      return {
+        id: String(id),
+        name: properties.name || "Estación SMN",
+        lat: stationLat,
+        lon: stationLon,
+        status: properties.status || "unknown",
+      };
+    })
+    .filter((station) => station && station.status !== "standBy")
+    .map((station) => ({
+      ...station,
+      distanceKm: haversineKm(lat, lon, station.lat, station.lon),
+    }))
+    .sort((a, b) => a.distanceKm - b.distanceKm);
+
+  if (!stations.length) throw new Error("SMN sin estaciones georreferenciadas");
+
+  for (const station of stations.slice(0, 5)) {
+    try {
+      const params = new URLSearchParams({
+        f: "json",
+        limit: "80",
+        sortby: "-reportTime",
+        wigos_station_identifier: station.id,
+      });
+      const url = `${SMN_OBS_API}/collections/${encodeURIComponent(SMN_OBS_COLLECTION)}/items?${params}`;
+      const data = await smnJson(url);
+      const features = data.features || [];
+      if (!features.length) continue;
+
+      const reports = [...new Set(
+        features.map((feature) => feature.properties?.reportTime).filter(Boolean)
+      )].sort((a, b) => new Date(b) - new Date(a));
+
+      for (const reportTime of reports.slice(0, 3)) {
+        const sameReport = features.filter((feature) => feature.properties?.reportTime === reportTime);
+        const values = {};
+        for (const feature of sameReport) {
+          const p = feature.properties || {};
+          if (p.name && Number.isFinite(Number(p.value))) values[p.name] = Number(p.value);
+        }
+
+        const temp = values.air_temperature;
+        if (!Number.isFinite(temp)) continue;
+
+        const ageMinutes = (Date.now() - new Date(reportTime).getTime()) / 60000;
+        if (!Number.isFinite(ageMinutes) || ageMinutes < -10 || ageMinutes > 180) continue;
+
+        return {
+          station: {
+            id: station.id,
+            name: station.name,
+            lat: station.lat,
+            lon: station.lon,
+            distanceKm: station.distanceKm,
+          },
+          temp,
+          humidity: Number.isFinite(values.relative_humidity) ? values.relative_humidity : null,
+          windSpeed: Number.isFinite(values.wind_speed) ? values.wind_speed : null,
+          precipitation: Number.isFinite(values.total_precipitation_or_total_water_equivalent)
+            ? values.total_precipitation_or_total_water_equivalent : null,
+          time: reportTime,
+          ageMinutes: Math.max(0, ageMinutes),
+        };
+      }
+    } catch (error) {
+      console.log("smn-observation-station-error", station.name, error?.message || String(error));
+    }
+  }
+
+  throw new Error("No hay una observación SMN reciente cerca de la ubicación");
+}
+
 async function pushSubscribe(request,env){
   const origin=request.headers.get("Origin");
   if(origin && origin!=="https://roxkleis.github.io"){
@@ -162,6 +272,20 @@ export default {
       const url = new URL(request.url);
       if (url.pathname === "/push/config" && request.method === "GET") {
         return new Response(JSON.stringify({ok:true,publicKey:env.VAPID_PUBLIC_KEY}),{headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+      }
+      if (url.pathname === "/observation" && request.method === "GET") {
+        const lat = Number(url.searchParams.get("lat"));
+        const lon = Number(url.searchParams.get("lon"));
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+          return new Response(JSON.stringify({ ok: false, error: "Invalid lat/lon" }), {
+            status: 400,
+            headers: { ...headers, "Content-Type": "application/json" },
+          });
+        }
+        const observation = await getNearestSMNObservation(lat, lon);
+        return new Response(JSON.stringify({ ok: true, source: "SMN", observation }), {
+          headers: { ...headers, "Content-Type": "application/json; charset=utf-8" },
+        });
       }
       if (url.pathname === "/push/subscribe" && request.method === "POST") return await pushSubscribe(request,env);
       if (url.pathname === "/push/unsubscribe" && request.method === "POST") return await pushUnsubscribe(request,env);
