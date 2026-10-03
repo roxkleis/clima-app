@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#071827">
+  <meta name="description" content="Clima por consenso entre modelos meteorológicos">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="styles.css">
+  <title>Clima Consenso</title>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">MI UBICACIÓN</div>
+        <h1 id="location">Buscando ubicación…</h1>
+      </div>
+      <div class="status" id="status">GPS</div>
+    </header>
+
+    <section class="hero">
+      <div class="weather-icon" aria-hidden="true">📍</div>
+      <div class="hero-text">
+        <div class="label">Ubicación detectada</div>
+        <div class="coords" id="coords">Esperando GPS…</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Primer objetivo</h2>
+      <p>Esta versión comprueba que la PWA pueda obtener la ubicación del teléfono. El clima y el consenso se conectarán en el siguiente paso.</p>
+      <div class="gps-grid">
+        <div><span>Latitud</span><strong id="lat">—</strong></div>
+        <div><span>Longitud</span><strong id="lon">—</strong></div>
+        <div><span>Precisión</span><strong id="accuracy">—</strong></div>
+      </div>
+    </section>
+
+    <button id="retry" class="primary" type="button">Actualizar ubicación</button>
+
+    <section id="message" class="message" role="status">
+      Permití el acceso a la ubicación cuando el navegador lo solicite.
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
