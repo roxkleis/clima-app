@@ -549,7 +549,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=13').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=15').catch(err => console.warn('SW:', err));
   });
 }
 
