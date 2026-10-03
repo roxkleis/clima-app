@@ -44,10 +44,10 @@ body{min-height:100vh;background:radial-gradient(circle at 50% -5%,#16466a 0,#08
 .day .desc{font-size:11px;color:#91a7b6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .day .max{font-size:14px;font-weight:750;text-align:right}
 .day .min{font-size:12px;color:#8399a8;text-align:right}
-.details-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(2,10,18,.76);backdrop-filter:blur(8px)}
-.details-overlay.hidden{display:none}
-.details-overlay .details{width:min(520px,100%);max-height:88vh;overflow:auto;padding:17px;margin:0;box-shadow:0 24px 80px rgba(0,0,0,.55)}
+.details{margin-top:8px;padding:17px;animation:detailsIn .18s ease-out}
+.details.hidden{display:none}
 .details-head{display:flex;justify-content:space-between;align-items:flex-start}
+@keyframes detailsIn{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
 .details-head h2{margin:4px 0 0;font-size:18px}
 .close{border:1px solid #31546a;background:#0b2639;color:#d9e8f0;border-radius:10px;font-size:22px;width:36px;height:36px;cursor:pointer}
 .model-cards{display:flex;flex-direction:column;gap:8px;margin-top:15px}
@@ -69,3 +69,6 @@ body{min-height:100vh;background:radial-gradient(circle at 50% -5%,#16466a 0,#08
 .primary{width:100%;margin-top:14px;border:0;border-radius:16px;padding:15px;background:#1688ff;color:white;font-size:16px;font-weight:700}
 .message{margin-top:12px;padding:12px 14px;border-radius:14px;background:#0a2132;color:#9eb3c2;font-size:12px;line-height:1.45}
 @media(max-width:390px){.hourly{grid-template-columns:repeat(6,82px);overflow-x:auto;padding-bottom:3px}.hour{min-width:82px}.day{grid-template-columns:50px 34px 1fr 42px 38px}.day .desc{display:none}.temperature{font-size:62px}.model-values{grid-template-columns:repeat(2,1fr)}}
+
+.consensus[aria-expanded="true"] .chevron{transform:rotate(90deg)}
+.consensus .chevron{transition:transform .18s ease}

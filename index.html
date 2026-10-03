@@ -34,7 +34,7 @@
     <div class="metric card"><span>💧 Humedad</span><strong id="humidity">—</strong></div>
   </section>
 
-  <button id="consensusBadge" class="consensus" type="button">
+  <button id="consensusBadge" class="consensus" type="button" aria-expanded="false">
     <span id="consensusDot" class="dot"></span>
     <span>
       <strong id="consensusTitle">Consenso —</strong>
@@ -42,6 +42,21 @@
     </span>
     <span class="chevron">›</span>
   </button>
+
+  <section id="modelDetails" class="details card hidden" aria-label="Comparación de modelos">
+    <div class="details-head">
+      <div>
+        <div class="eyebrow">COMPARACIÓN</div>
+        <h2 id="detailsTitle">Modelos meteorológicos</h2>
+      </div>
+      <button id="closeDetails" class="close" type="button" aria-label="Cerrar comparación">×</button>
+    </div>
+    <div id="modelCards" class="model-cards"></div>
+    <div class="details-note">
+      La etiqueta de consenso agrupa la temperatura actual dentro de una tolerancia de ±1 °C.
+      En esta etapa se comparan ECMWF, GFS e ICON. SMN WRF se incorporará en la próxima fase.
+    </div>
+  </section>
 
   <section class="section">
     <div class="section-title">
@@ -58,21 +73,6 @@
     </div>
     <div id="daily" class="daily"></div>
   </section>
-
-  <div id="modelDetails" class="details-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="detailsTitle"><section class="details card">
-    <div class="details-head">
-      <div>
-        <div class="eyebrow">COMPARACIÓN</div>
-        <h2 id="detailsTitle">Modelos meteorológicos</h2>
-      </div>
-      <button id="closeDetails" class="close" type="button">×</button>
-    </div>
-    <div id="modelCards" class="model-cards"></div>
-    <div class="details-note">
-      La etiqueta de consenso se calcula agrupando la temperatura actual dentro de una tolerancia de ±1 °C.
-      En esta etapa se comparan ECMWF, GFS e ICON. SMN WRF se incorporará en la próxima fase.
-    </div>
-  </section></div>
 
   <section class="card technical">
     <h2>Datos de la consulta</h2>

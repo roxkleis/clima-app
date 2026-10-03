@@ -230,17 +230,14 @@ async function loadWeather(){
 }
 
 els.retry.addEventListener("click",loadWeather);
+function setDetails(open){
+  els.modelDetails.classList.toggle("hidden", !open);
+  els.consensusBadge.setAttribute("aria-expanded", String(open));
+}
 els.consensusBadge.addEventListener("click",()=>{
-  els.modelDetails.classList.remove("hidden");
-  document.body.style.overflow="hidden";
+  const open = els.modelDetails.classList.contains("hidden");
+  setDetails(open);
 });
-document.addEventListener("keydown",e=>{
-  if(e.key==="Escape"){
-    els.modelDetails.classList.add("hidden");
-    document.body.style.overflow="";
-  }
-});
-els.closeDetails.addEventListener("click",()=>{els.modelDetails.classList.add("hidden");document.body.style.overflow="";});
+els.closeDetails.addEventListener("click",()=>setDetails(false));
+els.closeDetails.addEventListener("click",()=>els.modelDetails.classList.add("hidden"));
 loadWeather();
-
-els.modelDetails.addEventListener("click",e=>{if(e.target===els.modelDetails){els.modelDetails.classList.add("hidden");document.body.style.overflow="";}});
