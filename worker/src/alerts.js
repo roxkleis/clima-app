@@ -21,7 +21,7 @@ function firstTag(block, tag, fallback=""){ return tagText(block,tag,fallback); 
 
 function parsePolygon(area){
   const raw = firstTag(area,"polygon","");
-  const points = raw.trim().split(/\\s+/).map(p=>p.split(",").map(Number)).filter(p=>p.length===2 && p.every(Number.isFinite));
+  const points = raw.trim().split(/\s+/).map(p=>p.split(",").map(Number)).filter(p=>p.length===2 && p.every(Number.isFinite));
   return points.length >= 3 ? points : [];
 }
 function pointInPolygon(lat,lon,poly){
@@ -36,8 +36,8 @@ function pointInPolygon(lat,lon,poly){
 }
 function parseCap(xml){
   const alerts = [];
-  const blocks = /<alert\\b[\\s\\S]*?<\\/alert>/gi.test(xml)
-    ? [xml.match(/<alert\\b[\\s\\S]*?<\\/alert>/gi)?.[0] || xml]
+  const blocks = /<alert\b[\s\S]*?<\/alert>/gi.test(xml)
+    ? [xml.match(/<alert\b[\s\S]*?<\/alert>/gi)?.[0] || xml]
     : [xml];
 
   for(const block of blocks){
@@ -78,10 +78,10 @@ async function fetchCapAlerts(){
   if(alerts.length) return alerts;
 
   // Algunos feeds CAP publican un RSS/índice que apunta a los XML individuales.
-  const links=[...xml.matchAll(/<(?:[\\w-]+:)?(?:link|guid)\\b[^>]*?(?:href=["']([^"']+)["']|>(https?:[^<]+)<)/gi)]
+  const links=[...xml.matchAll(/<(?:[\w-]+:)?(?:link|guid)\b[^>]*?(?:href=["']([^"']+)["']|>(https?:[^<]+)<)/gi)]
     .map(m=>m[1]||m[2]).filter(Boolean)
     .map(u=>u.replace(/&amp;/g,"&"))
-    .filter(u=>/^https?:\\/\\//i.test(u))
+    .filter(u=>/^https?:\/\//i.test(u))
     .slice(0,20);
 
   for(const url of [...new Set(links)]){
@@ -109,7 +109,7 @@ function alertCovers(a,lat,lon){
 
 function formatAlertPayload(a){
   const color = a.severity==="Extreme" ? "roja" : a.severity==="Severe" ? "naranja" : "amarilla";
-  const desc = (a.description||"").replace(/\\s+/g," ").trim();
+  const desc = (a.description||"").replace(/\s+/g," ").trim();
   const extra = desc ? " "+desc.slice(0,180) : "";
   return {
     title: `⚠️ Alerta SMN ${color}: ${a.event}`,
