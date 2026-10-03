@@ -31,6 +31,30 @@ const fmtHour = iso => new Intl.DateTimeFormat('es-AR',{hour:'2-digit',minute:'2
 const fmtDay = iso => new Intl.DateTimeFormat('es-AR',{weekday:'short',day:'2-digit'}).format(new Date(`${iso}T12:00:00`)).replace('.','');
 const setMessage = text => els.message.textContent = text;
 
+async function reverseGeocode(lat,lon){
+  const key=`clima-location-${lat.toFixed(3)}-${lon.toFixed(3)}`;
+  try{
+    const cached=sessionStorage.getItem(key);
+    if(cached) return JSON.parse(cached);
+  }catch(_){}
+
+  const url=`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&localityLanguage=es`;
+  const r=await fetch(url,{cache:'no-store'});
+  if(!r.ok) throw new Error(`Reverse geocoding HTTP ${r.status}`);
+  const data=await r.json();
+
+  const locality=data.locality || data.city || data.principalSubdivision || '';
+  const province=data.principalSubdivision || '';
+  const name=locality && province && locality.toLowerCase()!==province.toLowerCase()
+    ? `${locality}, ${province.replace(/ Province$/,'').replace(/ Province of /,'')}`
+    : locality || province || 'Mi ubicación';
+
+  const result={name,locality,province};
+  try{sessionStorage.setItem(key,JSON.stringify(result));}catch(_){}
+  return result;
+}
+
+
 function queryUrl(model, lat, lon){
   const hourly = [
     'temperature_2m','relative_humidity_2m','apparent_temperature',
@@ -215,14 +239,14 @@ function renderModelDetails(snaps,consensus){
   }
 }
 
-function renderMain(items,position){
+function renderMain(items,position,placeName=null){
   const smn=items.find(x=>x.key==='smn');
   const targetIso=smn?.data?.data?.[0]?.validTime || null;
   const snaps=items.map(x=>currentSnapshot(x,targetIso));
   const c=consensusFor(snaps);
   const [icon,condition]=weatherInfo(consensusWeatherCode(snaps));
 
-  els.location.textContent='Mi ubicación';
+  els.location.textContent=placeName || 'Mi ubicación';
   els.updated.textContent=`Actualizado ${new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}`;
   els.status.textContent=`${items.length} MODELOS OK`;
   els.icon.textContent=icon;
@@ -390,6 +414,14 @@ async function loadWeather(){
     els.accuracy.textContent=`${Math.round(position.coords.accuracy)} m`;
 
     const lat=position.coords.latitude, lon=position.coords.longitude;
+    let placeName='Mi ubicación';
+    try{
+      const place=await reverseGeocode(lat,lon);
+      placeName=place.name || placeName;
+      els.location.textContent=placeName;
+    }catch(error){
+      console.warn('Reverse geocoding:',error);
+    }
     setMessage('Ubicación obtenida. Consultando SMN, ECMWF, GFS e ICON…');
 
     const requests=[
@@ -405,7 +437,7 @@ async function loadWeather(){
       setMessage('Ningún modelo respondió. Revisá la conexión e intentá nuevamente.');
       return;
     }
-    renderMain(ok,position);
+    renderMain(ok,position,placeName);
   }catch(error){
     showGpsError(error);
   }
