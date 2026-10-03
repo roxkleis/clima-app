@@ -143,7 +143,7 @@ function consensusFor(snaps){
   const codeVals=main.filter(x=>Number.isFinite(x.code));
   const code=codeVals.length ? codeVals[0].code : 0;
   const members=new Set(main.map(x=>x.key));
-  const split22 = total === 4 && groups.length === 2 && groups[0].length === 2 && groups[1].length === 2;
+  const split22 = usable.length === 4 && groups.length === 2 && groups[0].length === 2 && groups[1].length === 2;
   return {groups,main,count,total:usable.length,temp:mean,apparent,humidity,precipitation:precip,code,members,split22};
 }
 
