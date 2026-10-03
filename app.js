@@ -30,6 +30,7 @@ function fmtHour(iso){
   return new Intl.DateTimeFormat("es-AR",{hour:"2-digit",minute:"2-digit",hour12:false})
     .format(new Date(iso));
 }
+
 function fmtDay(iso){
   return new Intl.DateTimeFormat("es-AR",{weekday:"short",day:"2-digit"})
     .format(new Date(`${iso}T12:00:00`)).replace(".","");
@@ -39,18 +40,37 @@ function setMessage(text){ els.message.textContent = text; }
 
 async function fetchECMWF(lat, lon){
   const params = new URLSearchParams({
-    latitude: lat, longitude: lon,
-    hourly: "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,weather_code",
-    daily: "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code",
+    latitude: lat,
+    longitude: lon,
+    hourly: "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code",
+    daily: "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
     timezone: "auto",
     forecast_days: "7"
   });
-  const response = await fetch(`${API}?${params.toString()}`, {cache:"no-store"});
-  if(!response.ok) throw new Error(`ECMWF HTTP ${response.status}`);
-  return response.json();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(`${API}?${params.toString()}`, {
+      cache:"no-store",
+      signal: controller.signal
+    });
+
+    if(!response.ok){
+      const body = await response.text().catch(() => "");
+      throw new Error(`ECMWF HTTP ${response.status}${body ? `: ${body.slice(0,180)}` : ""}`);
+    }
+
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function renderWeather(data, position){
+  if(!data?.hourly?.time?.length) throw new Error("ECMWF devolvió una respuesta sin datos horarios.");
+
   const h = data.hourly;
   const d = data.daily;
 
@@ -62,35 +82,42 @@ function renderWeather(data, position){
   els.lon.textContent = position.coords.longitude.toFixed(6);
   els.accuracy.textContent = `${Math.round(position.coords.accuracy)} m`;
 
-  // Find the hourly record closest to the current moment.
   const now = Date.now();
   let currentIndex = 0, best = Infinity;
+
   h.time.forEach((t,i)=>{
     const diff = Math.abs(new Date(t).getTime() - now);
-    if(diff < best){best=diff; currentIndex=i;}
+    if(diff < best){ best=diff; currentIndex=i; }
   });
 
   const code = h.weather_code[currentIndex];
   const [icon, condition] = weatherInfo(code);
+
   els.icon.textContent = icon;
   els.condition.textContent = condition;
   els.temperature.textContent = Math.round(h.temperature_2m[currentIndex]);
   els.apparent.textContent = Math.round(h.apparent_temperature[currentIndex]);
-  els.rain.textContent = `${Math.round(h.precipitation_probability[currentIndex] ?? 0)}%`;
+
+  const currentPrecip = Number(h.precipitation[currentIndex] ?? 0);
+  els.rain.textContent = `${currentPrecip.toFixed(1)} mm`;
+
   els.humidity.textContent = `${Math.round(h.relative_humidity_2m[currentIndex])}%`;
 
   els.hourly.innerHTML = "";
   for(let offset=0; offset<6; offset++){
     const i = currentIndex + offset;
     if(i >= h.time.length) break;
+
     const [ico] = weatherInfo(h.weather_code[i]);
+    const precip = Number(h.precipitation[i] ?? 0);
+
     const el = document.createElement("div");
     el.className = `hour ${offset===0 ? "now" : ""}`;
     el.innerHTML = `
       <div class="time">${offset===0 ? "Ahora" : fmtHour(h.time[i])}</div>
       <div class="icon">${ico}</div>
       <div class="temp">${Math.round(h.temperature_2m[i])}°</div>
-      <div class="rain">💧 ${Math.round(h.precipitation_probability[i] ?? 0)}%</div>`;
+      <div class="rain">💧 ${precip.toFixed(1)} mm</div>`;
     els.hourly.appendChild(el);
   }
 
@@ -108,7 +135,7 @@ function renderWeather(data, position){
     els.daily.appendChild(el);
   }
 
-  setMessage("ECMWF IFS HRES conectado correctamente. Esta es la primera fuente meteorológica de nuestra aplicación.");
+  setMessage("ECMWF IFS HRES conectado correctamente. Primera fuente meteorológica de Clima Consenso.");
 }
 
 function showGpsError(error){
@@ -123,20 +150,30 @@ function showGpsError(error){
 
 function loadWeather(){
   if(!navigator.geolocation){
+    els.status.textContent = "ERROR";
     setMessage("Este navegador no admite geolocalización.");
     return;
   }
+
   els.status.textContent = "BUSCANDO";
   setMessage("Obteniendo ubicación y consultando ECMWF…");
 
   navigator.geolocation.getCurrentPosition(async (position)=>{
+    els.lat.textContent = position.coords.latitude.toFixed(6);
+    els.lon.textContent = position.coords.longitude.toFixed(6);
+    els.accuracy.textContent = `${Math.round(position.coords.accuracy)} m`;
+
     try{
       const data = await fetchECMWF(position.coords.latitude, position.coords.longitude);
       renderWeather(data, position);
     }catch(error){
-      console.error(error);
+      console.error("Clima Consenso:", error);
       els.status.textContent = "ERROR";
-      setMessage("No se pudo consultar ECMWF. Revisá tu conexión e intentá nuevamente.");
+      setMessage(
+        error.name === "AbortError"
+          ? "ECMWF tardó demasiado en responder. Tocá «Actualizar clima»."
+          : `No se pudo consultar ECMWF. ${error.message}`
+      );
     }
   }, showGpsError, {
     enableHighAccuracy:true,
@@ -148,7 +185,9 @@ function loadWeather(){
 els.retry.addEventListener("click", loadWeather);
 
 if("serviceWorker" in navigator){
-  window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(console.error));
+  window.addEventListener("load",()=>{
+    navigator.serviceWorker.register("./sw.js").catch(console.error);
+  });
 }
 
 loadWeather();
