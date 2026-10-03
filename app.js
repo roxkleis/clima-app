@@ -184,10 +184,5 @@ function loadWeather(){
 
 els.retry.addEventListener("click", loadWeather);
 
-if("serviceWorker" in navigator){
-  window.addEventListener("load",()=>{
-    navigator.serviceWorker.register("./sw.js").catch(console.error);
-  });
-}
-
+// Service Worker temporarily disabled during development to avoid stale-cache issues.
 loadWeather();
