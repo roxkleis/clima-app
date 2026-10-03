@@ -152,26 +152,40 @@ async function fetchNearestSMNObservation(lat,lon){
   for(const station of stations.slice(0,3)){
     const params=new URLSearchParams({
       f:'json',
-      limit:'1',
+      limit:'40',
       sortby:'-reportTime',
-      wigos_station_identifier:station.id,
-      name:'air_temperature'
+      wigos_station_identifier:station.id
     });
     try{
       const data=await fetchJsonWithTimeout(`${SMN_OBS_API}/collections/${encodeURIComponent(SMN_OBS_COLLECTION)}/items?${params.toString()}`);
-      const feature=data.features?.[0];
-      const p=feature?.properties||{};
-      const temp=Number(p.value);
-      const reportTime=p.reportTime || p.phenomenonTime;
-      if(!Number.isFinite(temp)||!reportTime) continue;
+      const features=data.features||[];
+      const latestReport=features
+        .map(f=>f.properties?.reportTime)
+        .filter(Boolean)
+        .sort((a,b)=>new Date(b)-new Date(a))[0];
+      if(!latestReport) continue;
 
-      const ageMinutes=(Date.now()-new Date(reportTime).getTime())/60000;
+      const sameReport=features.filter(f=>f.properties?.reportTime===latestReport);
+      const values={};
+      for(const feature of sameReport){
+        const p=feature.properties||{};
+        if(p.name && Number.isFinite(Number(p.value))) values[p.name]=Number(p.value);
+      }
+
+      const temp=values.air_temperature;
+      if(!Number.isFinite(temp)) continue;
+
+      const ageMinutes=(Date.now()-new Date(latestReport).getTime())/60000;
       if(ageMinutes>180) continue;
 
       return {
         station,
         temp,
-        time:reportTime,
+        humidity:Number.isFinite(values.relative_humidity)?values.relative_humidity:null,
+        windSpeed:Number.isFinite(values.wind_speed)?values.wind_speed:null,
+        precipitation:Number.isFinite(values.total_precipitation_or_total_water_equivalent)
+          ? values.total_precipitation_or_total_water_equivalent : null,
+        time:latestReport,
         ageMinutes:Math.max(0,ageMinutes)
       };
     }catch(error){
