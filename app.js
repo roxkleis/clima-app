@@ -426,7 +426,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=11').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=12').catch(err => console.warn('SW:', err));
   });
 }
 
@@ -515,7 +515,8 @@ async function savePushSubscription(){
     lon:position?.coords?.longitude ?? null,
     alerts_smn:notificationEls.smn.checked,
     alerts_storm:notificationEls.storm.checked,
-    daily_summary:notificationEls.daily.checked
+    daily_summary:notificationEls.daily.checked,
+    timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Argentina/Buenos_Aires'
   };
   const r=await fetch(PUSH_API+'/push/subscribe',{
     method:'POST',
@@ -541,7 +542,8 @@ async function updatePushPreferences(){
       lon:position?.coords?.longitude ?? null,
       alerts_smn:notificationEls.smn.checked,
       alerts_storm:notificationEls.storm.checked,
-      daily_summary:notificationEls.daily.checked
+      daily_summary:notificationEls.daily.checked,
+      timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Argentina/Buenos_Aires'
     })
   });
 }
