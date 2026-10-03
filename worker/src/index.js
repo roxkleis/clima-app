@@ -115,7 +115,12 @@ function corsHeaders(request) {
 
 
 const SMN_OBS_API = "https://w2b.smn.gov.ar/oapi";
-const SMN_OBS_COLLECTION = "urn:wmo:md:ar-smn:autosmn";
+const SMN_OBS_COLLECTIONS = [
+  // El sitio público del SMN utiliza principalmente observaciones SYNOP
+  // (slt0ci); autosmn se usa como respaldo cuando existe un dato más reciente.
+  "urn:wmo:md:ar-smn:slt0ci",
+  "urn:wmo:md:ar-smn:autosmn",
+];
 const SMN_STATIONS_COLLECTION = "stations";
 
 function haversineKm(lat1, lon1, lat2, lon2) {
@@ -137,24 +142,35 @@ async function smnJson(url) {
   return await r.json();
 }
 
+function stationCoordinates(feature) {
+  const p = feature?.properties || {};
+  const c = feature?.geometry?.coordinates;
+  const lat = Number(
+    Array.isArray(c) ? c[1] :
+    p.latitude ?? p.lat ?? p.station_latitude ?? p.y
+  );
+  const lon = Number(
+    Array.isArray(c) ? c[0] :
+    p.longitude ?? p.lon ?? p.station_longitude ?? p.x
+  );
+  return Number.isFinite(lat) && Number.isFinite(lon) ? {lat,lon} : null;
+}
+
 async function getNearestSMNObservation(lat, lon) {
   const stationUrl = `${SMN_OBS_API}/collections/${SMN_STATIONS_COLLECTION}/items?f=json&limit=200`;
   const stationData = await smnJson(stationUrl);
 
   const stations = (stationData.features || [])
     .map((feature) => {
-      const coordinates = feature.geometry?.coordinates;
       const properties = feature.properties || {};
+      const coords = stationCoordinates(feature);
       const id = properties.wigos_station_identifier || properties.id || feature.id;
-      if (!Array.isArray(coordinates) || coordinates.length < 2 || !id) return null;
-      const stationLat = Number(coordinates[1]);
-      const stationLon = Number(coordinates[0]);
-      if (!Number.isFinite(stationLat) || !Number.isFinite(stationLon)) return null;
+      if (!id || !coords) return null;
       return {
         id: String(id),
         name: properties.name || "Estación SMN",
-        lat: stationLat,
-        lon: stationLon,
+        lat: coords.lat,
+        lon: coords.lon,
         status: properties.status || "unknown",
       };
     })
@@ -165,58 +181,105 @@ async function getNearestSMNObservation(lat, lon) {
     }))
     .sort((a, b) => a.distanceKm - b.distanceKm);
 
-  if (!stations.length) throw new Error("SMN sin estaciones georreferenciadas");
+  if (!stations.length) {
+    throw new Error("SMN stations no contiene coordenadas utilizables");
+  }
 
-  for (const station of stations.slice(0, 5)) {
-    try {
-      const params = new URLSearchParams({
-        f: "json",
-        limit: "80",
-        sortby: "-reportTime",
-        wigos_station_identifier: station.id,
-      });
-      const url = `${SMN_OBS_API}/collections/${encodeURIComponent(SMN_OBS_COLLECTION)}/items?${params}`;
-      const data = await smnJson(url);
-      const features = data.features || [];
-      if (!features.length) continue;
+  // Primero buscamos en las estaciones más cercanas y en ambas colecciones
+  // oficiales. Esto permite coincidir con el dato REF/SYNOP que muestra
+  // smn.gob.ar y tener autosmn como respaldo.
+  for (const station of stations.slice(0, 8)) {
+    for (const collection of SMN_OBS_COLLECTIONS) {
+      try {
+        const params = new URLSearchParams({
+          f: "json",
+          limit: "120",
+          sortby: "-reportTime",
+          wigos_station_identifier: station.id,
+          name: "air_temperature",
+        });
 
-      const reports = [...new Set(
-        features.map((feature) => feature.properties?.reportTime).filter(Boolean)
-      )].sort((a, b) => new Date(b) - new Date(a));
+        const url = `${SMN_OBS_API}/collections/${encodeURIComponent(collection)}/items?${params}`;
+        const data = await smnJson(url);
+        const features = data.features || [];
+        if (!features.length) continue;
 
-      for (const reportTime of reports.slice(0, 3)) {
-        const sameReport = features.filter((feature) => feature.properties?.reportTime === reportTime);
-        const values = {};
-        for (const feature of sameReport) {
-          const p = feature.properties || {};
-          if (p.name && Number.isFinite(Number(p.value))) values[p.name] = Number(p.value);
+        // No dependemos de que el servidor ordene correctamente: elegimos
+        // explícitamente el reporte más reciente.
+        const valid = features
+          .map((feature) => ({
+            feature,
+            reportTime: feature.properties?.reportTime,
+            value: Number(feature.properties?.value),
+          }))
+          .filter((x) => x.reportTime && Number.isFinite(x.value))
+          .sort((a, b) => new Date(b.reportTime) - new Date(a.reportTime));
+
+        for (const candidate of valid.slice(0, 5)) {
+          const reportTime = candidate.reportTime;
+          const ageMinutes = (Date.now() - new Date(reportTime).getTime()) / 60000;
+          if (!Number.isFinite(ageMinutes) || ageMinutes < -10 || ageMinutes > 180) continue;
+
+          // Recuperamos el resto de variables del mismo reporte.
+          const reportId = candidate.feature.properties?.reportId;
+          let reportFeatures = features.filter(
+            (feature) => feature.properties?.reportTime === reportTime &&
+              (!reportId || feature.properties?.reportId === reportId)
+          );
+
+          // Si el filtro name=air_temperature devolvió sólo temperatura,
+          // pedimos el reporte completo para humedad/viento/precipitación.
+          if (reportFeatures.length < 2 && reportId) {
+            const fullParams = new URLSearchParams({
+              f: "json",
+              limit: "80",
+              reportId: reportId,
+            });
+            try {
+              const full = await smnJson(
+                `${SMN_OBS_API}/collections/${encodeURIComponent(collection)}/items?${fullParams}`
+              );
+              if (Array.isArray(full.features) && full.features.length) {
+                reportFeatures = full.features;
+              }
+            } catch (_) {}
+          }
+
+          const values = {};
+          for (const feature of reportFeatures) {
+            const p = feature.properties || {};
+            if (p.name && Number.isFinite(Number(p.value))) {
+              values[p.name] = Number(p.value);
+            }
+          }
+          values.air_temperature = candidate.value;
+
+          return {
+            station: {
+              id: station.id,
+              name: station.name,
+              lat: station.lat,
+              lon: station.lon,
+              distanceKm: station.distanceKm,
+            },
+            temp: candidate.value,
+            humidity: Number.isFinite(values.relative_humidity) ? values.relative_humidity : null,
+            windSpeed: Number.isFinite(values.wind_speed) ? values.wind_speed : null,
+            precipitation: Number.isFinite(values.total_precipitation_or_total_water_equivalent)
+              ? values.total_precipitation_or_total_water_equivalent : null,
+            time: reportTime,
+            ageMinutes: Math.max(0, ageMinutes),
+            collection,
+          };
         }
-
-        const temp = values.air_temperature;
-        if (!Number.isFinite(temp)) continue;
-
-        const ageMinutes = (Date.now() - new Date(reportTime).getTime()) / 60000;
-        if (!Number.isFinite(ageMinutes) || ageMinutes < -10 || ageMinutes > 180) continue;
-
-        return {
-          station: {
-            id: station.id,
-            name: station.name,
-            lat: station.lat,
-            lon: station.lon,
-            distanceKm: station.distanceKm,
-          },
-          temp,
-          humidity: Number.isFinite(values.relative_humidity) ? values.relative_humidity : null,
-          windSpeed: Number.isFinite(values.wind_speed) ? values.wind_speed : null,
-          precipitation: Number.isFinite(values.total_precipitation_or_total_water_equivalent)
-            ? values.total_precipitation_or_total_water_equivalent : null,
-          time: reportTime,
-          ageMinutes: Math.max(0, ageMinutes),
-        };
+      } catch (error) {
+        console.log(
+          "smn-observation-error",
+          station.name,
+          collection,
+          error?.message || String(error)
+        );
       }
-    } catch (error) {
-      console.log("smn-observation-station-error", station.name, error?.message || String(error));
     }
   }
 
