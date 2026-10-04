@@ -193,17 +193,46 @@ function parseTiepreDate(dateText, timeText) {
 
 async function inflateZipEntry(buffer) {
   const view = new DataView(buffer);
-  if (view.getUint32(0, true) !== 0x04034b50) {
+  let localOffset = 0;
+  let compression = view.getUint16(8, true);
+  let compressedSize = view.getUint32(18, true);
+  let fileNameLength = view.getUint16(26, true);
+  let extraLength = view.getUint16(28, true);
+
+  // Algunos ZIP usan data descriptors y dejan los tamaños en cero
+  // dentro del encabezado local. En ese caso recuperamos los tamaños
+  // desde el central directory.
+  if (view.getUint32(0, true) !== 0x04034b50 || !compressedSize) {
+    let eocd = -1;
+    const min = Math.max(0, buffer.byteLength - 65557);
+    for (let i = buffer.byteLength - 22; i >= min; i--) {
+      if (view.getUint32(i, true) === 0x06054b50) {
+        eocd = i;
+        break;
+      }
+    }
+    if (eocd < 0) throw new Error("TIEPRE: ZIP central directory no encontrado");
+
+    const centralOffset = view.getUint32(eocd + 16, true);
+    if (view.getUint32(centralOffset, true) !== 0x02014b50) {
+      throw new Error("TIEPRE: entrada central ZIP inválida");
+    }
+
+    compression = view.getUint16(centralOffset + 10, true);
+    compressedSize = view.getUint32(centralOffset + 20, true);
+    localOffset = view.getUint32(centralOffset + 42, true);
+    fileNameLength = view.getUint16(centralOffset + 28, true);
+    extraLength = view.getUint16(centralOffset + 30, true);
+  }
+
+  if (view.getUint32(localOffset, true) !== 0x04034b50) {
     throw new Error("TIEPRE: ZIP local header inválido");
   }
 
-  const compression = view.getUint16(8, true);
-  const compressedSize = view.getUint32(18, true);
-  const fileNameLength = view.getUint16(26, true);
-  const extraLength = view.getUint16(28, true);
-  const dataOffset = 30 + fileNameLength + extraLength;
+  const localNameLength = view.getUint16(localOffset + 26, true);
+  const localExtraLength = view.getUint16(localOffset + 28, true);
+  const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
   const dataEnd = dataOffset + compressedSize;
-
   if (dataEnd > buffer.byteLength) throw new Error("TIEPRE: ZIP truncado");
 
   const compressed = buffer.slice(dataOffset, dataEnd);
