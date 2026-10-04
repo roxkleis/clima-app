@@ -114,15 +114,16 @@ function corsHeaders(request) {
 
 
 
-const SMN_LEGACY_API = "https://ws.smn.gob.ar/map_items/weather";
+
+const SMN_TIEPRE_API = "https://ssl.smn.gob.ar/dpd/zipopendata.php?dato=tiepre";
 const SMN_OBS_API = "https://w2b.smn.gov.ar/oapi";
 const SMN_OBS_COLLECTIONS = [
-  // El sitio público del SMN utiliza principalmente observaciones SYNOP
-  // (slt0ci); autosmn se usa como respaldo cuando existe un dato más reciente.
   "urn:wmo:md:ar-smn:slt0ci",
   "urn:wmo:md:ar-smn:autosmn",
 ];
 const SMN_STATIONS_COLLECTION = "stations";
+const TIEPRE_CACHE_KEY = "https://clima-internal/tiepre/current.zip";
+const TIEPRE_MAX_AGE_MINUTES = 180;
 
 function haversineKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
@@ -137,99 +138,285 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 
 async function smnJson(url) {
   const r = await fetch(url, {
-    headers: { "Accept": "application/geo+json, application/json" },
+    headers: {
+      "Accept": "application/geo+json, application/json",
+      "User-Agent": "Clima-by-richardspulgar/1.0",
+    },
   });
-  if (!r.ok) throw new Error(`SMN API HTTP ${r.status}`);
+  if (!r.ok) throw new Error("SMN API HTTP " + r.status);
   return await r.json();
 }
 
-function stationCoordinates(feature) {
-  const p = feature?.properties || {};
-  const c = feature?.geometry?.coordinates;
-  const lat = Number(
-    Array.isArray(c) ? c[1] :
-    p.latitude ?? p.lat ?? p.station_latitude ?? p.y
-  );
-  const lon = Number(
-    Array.isArray(c) ? c[0] :
-    p.longitude ?? p.lon ?? p.station_longitude ?? p.x
-  );
-  return Number.isFinite(lat) && Number.isFinite(lon) ? {lat,lon} : null;
+function normalizeStationName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
-async function getLegacySMNObservation(lat, lon) {
-  const data = await smnJson(SMN_LEGACY_API);
-  if (!Array.isArray(data)) throw new Error("SMN legacy: respuesta inválida");
+function parseTiepreDate(dateText, timeText) {
+  const rawDate = String(dateText || "").trim();
+  const rawTime = String(timeText || "").trim();
+  const parts = rawDate.split(/[-/]/);
+  if (parts.length !== 3) return null;
 
-  const candidates = data.map((item) => {
-    const itemLat = Number(item?.lat);
-    const itemLon = Number(item?.lon);
-    const temp = Number(item?.weather?.temp);
-    const humidity = Number(item?.weather?.humidity);
-    const updatedMs = Number(item?.updated);
-    if (!Number.isFinite(itemLat) || !Number.isFinite(itemLon) ||
-        !Number.isFinite(temp) || !Number.isFinite(updatedMs)) return null;
+  const day = Number(parts[0]);
+  const year = Number(parts[2]);
+  const monthRaw = String(parts[1]).trim().toUpperCase();
+  const months = {
+    ENERO: 1, FEBRERO: 2, MARZO: 3, ABRIL: 4, MAYO: 5, JUNIO: 6,
+    JULIO: 7, AGOSTO: 8, SEPTIEMBRE: 9, OCTUBRE: 10, NOVIEMBRE: 11, DICIEMBRE: 12,
+    JANUARY: 1, FEBRUARY: 2, MARCH: 3, APRIL: 4, MAY: 5, JUNE: 6,
+    JULY: 7, AUGUST: 8, SEPTEMBER: 9, OCTOBER: 10, NOVEMBER: 11, DECEMBER: 12,
+    ENE: 1, FEB: 2, MAR: 3, ABR: 4, MAY: 5, JUN: 6, JUL: 7, AGO: 8,
+    SEP: 9, OCT: 10, NOV: 11, DIC: 12,
+  };
+  const month = Number.isFinite(Number(monthRaw)) ? Number(monthRaw) : months[monthRaw];
+  if (!Number.isFinite(day) || !Number.isFinite(year) || !month) return null;
 
-    const ageMinutes = (Date.now() - updatedMs) / 60000;
-    if (!Number.isFinite(ageMinutes) || ageMinutes < -10 || ageMinutes > 180) return null;
+  const hm = rawTime.split(":");
+  const hour = Number(hm[0]);
+  const minute = Number(hm[1] || 0);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
 
-    return {
-      station: {
-        id: item?.lid ?? item?._id ?? null,
-        name: item?.name || "Estación SMN",
-        lat: itemLat,
-        lon: itemLon,
-        distanceKm: haversineKm(lat, lon, itemLat, itemLon),
-      },
-      temp,
-      humidity: Number.isFinite(humidity) ? humidity : null,
-      windSpeed: Number.isFinite(Number(item?.weather?.wind_speed))
-        ? Number(item.weather.wind_speed) / 3.6 : null,
-      windDirection: item?.weather?.wind_deg || null,
-      precipitation: null,
-      cloudCover: null,
-      presentWeather: item?.weather?.description || null,
-      time: new Date(updatedMs).toISOString(),
-      ageMinutes: Math.max(0, ageMinutes),
-      collection: "smn-legacy-map_items-weather",
-    };
-  }).filter(Boolean);
-
-  if (!candidates.length) throw new Error("SMN legacy: no hay observaciones recientes");
-
-  candidates.sort((a,b) =>
-    a.station.distanceKm - b.station.distanceKm ||
-    a.ageMinutes - b.ageMinutes
-  );
-  return candidates[0];
+  const iso = String(year).padStart(4,"0") + "-" +
+    String(month).padStart(2,"0") + "-" +
+    String(day).padStart(2,"0") + "T" +
+    String(hour).padStart(2,"0") + ":" +
+    String(minute).padStart(2,"0") + ":00-03:00";
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? { iso, ms } : null;
 }
 
-async function getW2BSMNObservation(lat, lon) {
-  // W2B es la API oficial actual del SMN para observaciones.
-  // Primero ubicamos la estación operativa más cercana y después pedimos
-  // exclusivamente sus observaciones recientes.
+async function inflateZipEntry(buffer) {
+  const view = new DataView(buffer);
+  if (view.getUint32(0, true) !== 0x04034b50) {
+    throw new Error("TIEPRE: ZIP local header inválido");
+  }
+
+  const compression = view.getUint16(8, true);
+  const compressedSize = view.getUint32(18, true);
+  const fileNameLength = view.getUint16(26, true);
+  const extraLength = view.getUint16(28, true);
+  const dataOffset = 30 + fileNameLength + extraLength;
+  const dataEnd = dataOffset + compressedSize;
+
+  if (dataEnd > buffer.byteLength) throw new Error("TIEPRE: ZIP truncado");
+
+  const compressed = buffer.slice(dataOffset, dataEnd);
+  if (compression === 0) return compressed;
+  if (compression !== 8) throw new Error("TIEPRE: método ZIP no soportado (" + compression + ")");
+
+  if (typeof DecompressionStream === "undefined") {
+    throw new Error("TIEPRE: DecompressionStream no disponible");
+  }
+
+  const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return await new Response(stream).arrayBuffer();
+}
+
+async function fetchTiepreText() {
+  const cache = caches.default;
+  const cached = await cache.match(TIEPRE_CACHE_KEY);
+  if (cached) return await cached.text();
+
+  const response = await fetch(SMN_TIEPRE_API, {
+    headers: {
+      "Accept": "application/zip, application/octet-stream, */*",
+      "User-Agent": "Mozilla/5.0 (compatible; Clima-by-richardspulgar/1.0)",
+    },
+    cf: { cacheTtl: 600, cacheEverything: true },
+  });
+
+  if (!response.ok) throw new Error("SMN TIEPRE HTTP " + response.status);
+
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength < 4) throw new Error("SMN TIEPRE: respuesta vacía");
+
+  const uncompressed = await inflateZipEntry(bytes);
+  const text = new TextDecoder("windows-1252").decode(uncompressed);
+
+  const cacheResponse = new Response(text, {
+    headers: {
+      "Content-Type": "text/plain; charset=windows-1252",
+      "Cache-Control": "public, max-age=600",
+    },
+  });
+  await cache.put(TIEPRE_CACHE_KEY, cacheResponse.clone());
+  return text;
+}
+
+async function getW2BStationCatalog() {
   const stations = await smnJson(
     SMN_OBS_API + "/collections/" + SMN_STATIONS_COLLECTION + "/items?f=geojson&limit=200"
   );
 
-  const stationCandidates = (stations.features || []).map((feature) => {
+  return (stations.features || []).map((feature) => {
     const p = feature?.properties || {};
-    const coordinates = feature?.geometry?.coordinates;
-    if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
-    const stationLat = Number(coordinates[1]);
-    const stationLon = Number(coordinates[0]);
-    const stationId = String(p.wigos_station_identifier || p.id || feature.id || "");
-    if (!stationId || !Number.isFinite(stationLat) || !Number.isFinite(stationLon)) return null;
-    if (p.status && String(p.status).toLowerCase() !== "operational") return null;
-    return {
-      id: stationId, name: p.name || "Estación SMN", lat: stationLat, lon: stationLon,
-      distanceKm: haversineKm(lat, lon, stationLat, stationLon),
-    };
-  }).filter(Boolean);
+    const c = feature?.geometry?.coordinates;
+    if (!Array.isArray(c) || c.length < 2) return null;
 
+    const lat = Number(c[1]);
+    const lon = Number(c[0]);
+    const name = String(p.name || "").trim();
+    const id = String(p.wigos_station_identifier || p.id || feature.id || "").trim();
+    if (!name || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+    return { id, name, lat, lon, normalized: normalizeStationName(name) };
+  }).filter(Boolean);
+}
+
+function findStationMetadata(stationName, catalog) {
+  const target = normalizeStationName(stationName);
+  if (!target) return null;
+
+  let exact = catalog.find(s => s.normalized === target);
+  if (exact) return exact;
+
+  exact = catalog.find(s => s.normalized.includes(target) || target.includes(s.normalized));
+  if (exact) return exact;
+
+  const targetTokens = new Set(target.split(" ").filter(x => x.length > 2));
+  let best = null;
+  let bestScore = 0;
+  for (const station of catalog) {
+    const tokens = station.normalized.split(" ");
+    const overlap = tokens.filter(t => targetTokens.has(t)).length;
+    const score = overlap / Math.max(1, Math.max(tokens.length, targetTokens.size));
+    if (score > bestScore) {
+      bestScore = score;
+      best = station;
+    }
+  }
+  return bestScore >= 0.5 ? best : null;
+}
+
+function parseTiepreRows(text) {
+  const rows = [];
+  for (const rawLine of String(text || "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || !line.includes(";")) continue;
+
+    const parts = line.replace(/\r/g, "").split(";").map(x => x.trim());
+    while (parts.length && parts[parts.length - 1] === "") parts.pop();
+    if (parts.length < 10) continue;
+
+    const stationName = parts[0];
+    const date = parseTiepreDate(parts[1], parts[2]);
+    const temperature = Number(String(parts[5]).replace(",", "."));
+    const feelsLike = Number(String(parts[6]).replace(",", "."));
+    const humidity = Number(String(parts[7]).replace(",", "."));
+    const pressure = Number(String(parts[9]).replace(",", "."));
+    if (!stationName || !date || !Number.isFinite(temperature)) continue;
+
+    const windRaw = String(parts[8] || "").trim();
+    let windDirection = null;
+    let windSpeedKmh = null;
+    if (/^calma$/i.test(windRaw)) {
+      windDirection = "Calma";
+      windSpeedKmh = 0;
+    } else {
+      const windMatch = windRaw.match(/^(.*?)(?:\s+)(\d+(?:[.,]\d+)?)\s*$/);
+      if (windMatch) {
+        windDirection = windMatch[1].trim() || null;
+        windSpeedKmh = Number(windMatch[2].replace(",", "."));
+      } else {
+        windDirection = windRaw || null;
+      }
+    }
+
+    rows.push({
+      stationName,
+      normalized: normalizeStationName(stationName),
+      time: date.iso,
+      timestamp: date.ms,
+      temp: temperature,
+      feelsLike: Number.isFinite(feelsLike) ? feelsLike : null,
+      humidity: Number.isFinite(humidity) ? humidity : null,
+      pressure: Number.isFinite(pressure) ? pressure : null,
+      visibility: parts[4] || null,
+      windDirection,
+      windSpeed: Number.isFinite(windSpeedKmh) ? windSpeedKmh / 3.6 : null,
+      presentWeather: parts[3] || null,
+    });
+  }
+  return rows;
+}
+
+async function getTiepreObservation(lat, lon) {
+  const [text, catalog] = await Promise.all([
+    fetchTiepreText(),
+    getW2BStationCatalog(),
+  ]);
+
+  const rows = parseTiepreRows(text);
+  if (!rows.length) throw new Error("SMN TIEPRE: no se pudieron interpretar registros");
+
+  const now = Date.now();
+  const recentRows = rows.filter(row => {
+    const age = (now - row.timestamp) / 60000;
+    return Number.isFinite(age) && age >= -10 && age <= TIEPRE_MAX_AGE_MINUTES;
+  });
+  if (!recentRows.length) throw new Error("SMN TIEPRE: no hay registros recientes");
+
+  const candidates = [];
+  for (const row of recentRows) {
+    const station = findStationMetadata(row.stationName, catalog);
+    if (!station) continue;
+    candidates.push({
+      ...row,
+      station,
+      distanceKm: haversineKm(lat, lon, station.lat, station.lon),
+    });
+  }
+
+  if (!candidates.length) {
+    throw new Error("SMN TIEPRE: no se pudo asociar ninguna estación a coordenadas");
+  }
+
+  candidates.sort((a, b) =>
+    a.distanceKm - b.distanceKm || b.timestamp - a.timestamp
+  );
+
+  const chosen = candidates[0];
+  const ageMinutes = Math.max(0, (now - chosen.timestamp) / 60000);
+
+  return {
+    station: {
+      id: chosen.station.id || chosen.station.name,
+      name: chosen.station.name,
+      lat: chosen.station.lat,
+      lon: chosen.station.lon,
+      distanceKm: chosen.distanceKm,
+    },
+    temp: chosen.temp,
+    humidity: chosen.humidity,
+    windSpeed: chosen.windSpeed,
+    windDirection: chosen.windDirection,
+    precipitation: null,
+    cloudCover: null,
+    presentWeather: chosen.presentWeather,
+    pressure: chosen.pressure,
+    feelsLike: chosen.feelsLike,
+    visibility: chosen.visibility,
+    time: chosen.time,
+    ageMinutes,
+    collection: "SMN-TIEPRE",
+  };
+}
+
+async function getW2BSMNObservation(lat, lon) {
+  const stationCandidates = await getW2BStationCatalog();
   if (!stationCandidates.length) throw new Error("W2B: no hay estaciones SMN con coordenadas");
-  stationCandidates.sort((a, b) => a.distanceKm - b.distanceKm);
+
+  stationCandidates.sort((a, b) =>
+    haversineKm(lat, lon, a.lat, a.lon) - haversineKm(lat, lon, b.lat, b.lon)
+  );
   const station = stationCandidates[0];
+  station.distanceKm = haversineKm(lat, lon, station.lat, station.lon);
 
   const delta = 0.08;
   const bbox = [station.lon - delta, station.lat - delta, station.lon + delta, station.lat + delta].join(",");
@@ -257,8 +444,10 @@ async function getW2BSMNObservation(lat, lon) {
   }
 
   if (!candidates.length) throw new Error("W2B: no hay temperatura reciente para " + station.name);
-  candidates.sort((a, b) => new Date(b.reportTime) - new Date(a.reportTime) ||
-    (a.collection === "urn:wmo:md:ar-smn:slt0ci" ? -1 : 1));
+  candidates.sort((a, b) =>
+    new Date(b.reportTime) - new Date(a.reportTime) ||
+    (a.collection === "urn:wmo:md:ar-smn:slt0ci" ? -1 : 1)
+  );
   const chosen = candidates[0];
 
   const values = {};
@@ -278,28 +467,34 @@ async function getW2BSMNObservation(lat, lon) {
   }
 
   return {
-    station, temp: chosen.temp,
+    station,
+    temp: chosen.temp,
     humidity: Number.isFinite(values.relative_humidity) ? values.relative_humidity : null,
     windSpeed: Number.isFinite(values.wind_speed) ? values.wind_speed : null,
     windDirection: Number.isFinite(values.wind_direction) ? values.wind_direction : null,
-    precipitation: Number.isFinite(values.total_precipitation_or_total_water_equivalent) ? values.total_precipitation_or_total_water_equivalent : null,
+    precipitation: Number.isFinite(values.total_precipitation_or_total_water_equivalent)
+      ? values.total_precipitation_or_total_water_equivalent : null,
     cloudCover: Number.isFinite(values.cloud_cover_total) ? values.cloud_cover_total : null,
     presentWeather: typeof values.present_weather === "string" ? values.present_weather : null,
-    time: chosen.reportTime, ageMinutes: Math.max(0, chosen.ageMinutes), collection: chosen.collection
+    time: chosen.reportTime,
+    ageMinutes: Math.max(0, chosen.ageMinutes),
+    collection: chosen.collection
   };
 }
 
 async function getNearestSMNObservation(lat, lon) {
   try {
+    return await getTiepreObservation(lat, lon);
+  } catch (tiepreError) {
+    console.log("smn-tiepre-warning", tiepreError?.message || String(tiepreError));
+  }
+
+  try {
     return await getW2BSMNObservation(lat, lon);
   } catch (w2bError) {
     console.log("smn-w2b-warning", w2bError?.message || String(w2bError));
   }
-  try {
-    return await getLegacySMNObservation(lat, lon);
-  } catch (legacyError) {
-    console.log("smn-legacy-warning", legacyError?.message || String(legacyError));
-  }
+
   throw new Error("No hay observaciones SMN recientes disponibles");
 }
 
