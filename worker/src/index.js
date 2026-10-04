@@ -204,101 +204,103 @@ async function getLegacySMNObservation(lat, lon) {
   return candidates[0];
 }
 
+async function getW2BSMNObservation(lat, lon) {
+  // W2B es la API oficial actual del SMN para observaciones.
+  // Primero ubicamos la estación operativa más cercana y después pedimos
+  // exclusivamente sus observaciones recientes.
+  const stations = await smnJson(
+    SMN_OBS_API + "/collections/" + SMN_STATIONS_COLLECTION + "/items?f=geojson&limit=200"
+  );
+
+  const stationCandidates = (stations.features || []).map((feature) => {
+    const p = feature?.properties || {};
+    const coordinates = feature?.geometry?.coordinates;
+    if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
+    const stationLat = Number(coordinates[1]);
+    const stationLon = Number(coordinates[0]);
+    const stationId = String(p.wigos_station_identifier || p.id || feature.id || "");
+    if (!stationId || !Number.isFinite(stationLat) || !Number.isFinite(stationLon)) return null;
+    if (p.status && String(p.status).toLowerCase() !== "operational") return null;
+    return {
+      id: stationId, name: p.name || "Estación SMN", lat: stationLat, lon: stationLon,
+      distanceKm: haversineKm(lat, lon, stationLat, stationLon),
+    };
+  }).filter(Boolean);
+
+  if (!stationCandidates.length) throw new Error("W2B: no hay estaciones SMN con coordenadas");
+  stationCandidates.sort((a, b) => a.distanceKm - b.distanceKm);
+  const station = stationCandidates[0];
+
+  const delta = 0.08;
+  const bbox = [station.lon - delta, station.lat - delta, station.lon + delta, station.lat + delta].join(",");
+  const candidates = [];
+
+  for (const collection of SMN_OBS_COLLECTIONS) {
+    try {
+      const params = new URLSearchParams({f: "geojson", bbox, limit: "2000"});
+      const data = await smnJson(
+        SMN_OBS_API + "/collections/" + encodeURIComponent(collection) + "/items?" + params
+      );
+      for (const feature of data.features || []) {
+        const p = feature?.properties || {};
+        const stationId = String(p.wigos_station_identifier || "");
+        const reportTime = p.reportTime;
+        const temp = Number(p.value);
+        if (stationId !== station.id || p.name !== "air_temperature" || !reportTime || !Number.isFinite(temp)) continue;
+        const ageMinutes = (Date.now() - new Date(reportTime).getTime()) / 60000;
+        if (!Number.isFinite(ageMinutes) || ageMinutes < -10 || ageMinutes > 180) continue;
+        candidates.push({collection, stationId, temp, reportTime, ageMinutes});
+      }
+    } catch (error) {
+      console.log("smn-observation-query-error", collection, error?.message || String(error));
+    }
+  }
+
+  if (!candidates.length) throw new Error("W2B: no hay temperatura reciente para " + station.name);
+  candidates.sort((a, b) => new Date(b.reportTime) - new Date(a.reportTime) ||
+    (a.collection === "urn:wmo:md:ar-smn:slt0ci" ? -1 : 1));
+  const chosen = candidates[0];
+
+  const values = {};
+  try {
+    const params = new URLSearchParams({f: "geojson", bbox, limit: "2000"});
+    const data = await smnJson(
+      SMN_OBS_API + "/collections/" + encodeURIComponent(chosen.collection) + "/items?" + params
+    );
+    for (const feature of data.features || []) {
+      const p = feature?.properties || {};
+      if (String(p.wigos_station_identifier || "") !== chosen.stationId || p.reportTime !== chosen.reportTime || !p.name) continue;
+      if (p.name === "present_weather" && p.description) values.present_weather = p.description;
+      else if (Number.isFinite(Number(p.value))) values[p.name] = Number(p.value);
+    }
+  } catch (error) {
+    console.log("smn-observation-detail-warning", error?.message || String(error));
+  }
+
+  return {
+    station, temp: chosen.temp,
+    humidity: Number.isFinite(values.relative_humidity) ? values.relative_humidity : null,
+    windSpeed: Number.isFinite(values.wind_speed) ? values.wind_speed : null,
+    windDirection: Number.isFinite(values.wind_direction) ? values.wind_direction : null,
+    precipitation: Number.isFinite(values.total_precipitation_or_total_water_equivalent) ? values.total_precipitation_or_total_water_equivalent : null,
+    cloudCover: Number.isFinite(values.cloud_cover_total) ? values.cloud_cover_total : null,
+    presentWeather: typeof values.present_weather === "string" ? values.present_weather : null,
+    time: chosen.reportTime, ageMinutes: Math.max(0, chosen.ageMinutes), collection: chosen.collection
+  };
+}
+
 async function getNearestSMNObservation(lat, lon) {
+  try {
+    return await getW2BSMNObservation(lat, lon);
+  } catch (w2bError) {
+    console.log("smn-w2b-warning", w2bError?.message || String(w2bError));
+  }
   try {
     return await getLegacySMNObservation(lat, lon);
   } catch (legacyError) {
     console.log("smn-legacy-warning", legacyError?.message || String(legacyError));
   }
-
-  const stationNames = new Map();
-  try {
-    const stationData = await smnJson(
-      `${SMN_OBS_API}/collections/${SMN_STATIONS_COLLECTION}/items?f=json&limit=200`
-    );
-    for (const feature of stationData.features || []) {
-      const p = feature.properties || {};
-      const id = String(p.wigos_station_identifier || p.id || feature.id || "");
-      if (id) stationNames.set(id, p.name || "Estación SMN");
-    }
-  } catch (error) {
-    console.log("smn-stations-warning", error?.message || String(error));
-  }
-
-  const delta = 1.0;
-  const bbox = [lon-delta,lat-delta,lon+delta,lat+delta].join(",");
-  let candidates=[];
-
-  for (const collection of SMN_OBS_COLLECTIONS) {
-    try {
-      const params = new URLSearchParams({f:"json",bbox,limit:"1000"});
-      const data = await smnJson(
-        `${SMN_OBS_API}/collections/${encodeURIComponent(collection)}/items?${params}`
-      );
-
-      for (const feature of data.features || []) {
-        const p=feature.properties||{}, coordinates=feature.geometry?.coordinates;
-        const stationId=String(p.wigos_station_identifier||"");
-        const temp=Number(p.value), reportTime=p.reportTime;
-        if(p.name!=="air_temperature"||!stationId||!reportTime||!Number.isFinite(temp)||
-           !Array.isArray(coordinates)||coordinates.length<2) continue;
-
-        const stationLat=Number(coordinates[1]), stationLon=Number(coordinates[0]);
-        if(!Number.isFinite(stationLat)||!Number.isFinite(stationLon)) continue;
-
-        const ageMinutes=(Date.now()-new Date(reportTime).getTime())/60000;
-        if(!Number.isFinite(ageMinutes)||ageMinutes<-10||ageMinutes>180) continue;
-
-        candidates.push({
-          collection,stationId,temp,reportTime,ageMinutes,
-          lat:stationLat,lon:stationLon,
-          distanceKm:haversineKm(lat,lon,stationLat,stationLon)
-        });
-      }
-    } catch(error) {
-      console.log("smn-observation-query-error",collection,error?.message||String(error));
-    }
-  }
-
-  if(!candidates.length) throw new Error("No hay observaciones SMN recientes en el área");
-
-  candidates.sort((a,b)=>a.distanceKm-b.distanceKm||new Date(b.reportTime)-new Date(a.reportTime));
-  const nearestDistance=candidates[0].distanceKm;
-  const chosen=(candidates.filter(x=>x.distanceKm<=Math.max(20,nearestDistance+5))
-    .sort((a,b)=>new Date(b.reportTime)-new Date(a.reportTime)||a.distanceKm-b.distanceKm))[0]||candidates[0];
-
-  const values={};
-  try {
-    const d=.08;
-    const detailBbox=[chosen.lon-d,chosen.lat-d,chosen.lon+d,chosen.lat+d].join(",");
-    const params=new URLSearchParams({f:"json",bbox:detailBbox,limit:"500"});
-    const data=await smnJson(
-      `${SMN_OBS_API}/collections/${encodeURIComponent(chosen.collection)}/items?${params}`
-    );
-    for(const feature of data.features||[]){
-      const p=feature.properties||{};
-      if(String(p.wigos_station_identifier||"")===chosen.stationId&&p.reportTime===chosen.reportTime&&p.name){
-        if(p.name==="present_weather"&&p.description) values.present_weather=p.description;
-        else if(Number.isFinite(Number(p.value))) values[p.name]=Number(p.value);
-      }
-    }
-  } catch(error) {
-    console.log("smn-observation-detail-warning",error?.message||String(error));
-  }
-
-  return {
-    station:{id:chosen.stationId,name:stationNames.get(chosen.stationId)||"Estación SMN",
-      lat:chosen.lat,lon:chosen.lon,distanceKm:chosen.distanceKm},
-    temp:chosen.temp,
-    humidity:Number.isFinite(values.relative_humidity)?values.relative_humidity:null,
-    windSpeed:Number.isFinite(values.wind_speed)?values.wind_speed:null,
-    windDirection:Number.isFinite(values.wind_direction)?values.wind_direction:null,
-    precipitation:Number.isFinite(values.total_precipitation_or_total_water_equivalent)
-      ?values.total_precipitation_or_total_water_equivalent:null,
-    cloudCover:Number.isFinite(values.cloud_cover_total)?values.cloud_cover_total:null,
-    presentWeather:typeof values.present_weather==="string"?values.present_weather:null,
-    time:chosen.reportTime,ageMinutes:Math.max(0,chosen.ageMinutes),collection:chosen.collection
-  };
+  throw new Error("No hay observaciones SMN recientes disponibles");
 }
 
 async function pushSubscribe(request,env){
