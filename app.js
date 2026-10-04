@@ -383,7 +383,7 @@ function renderHourly(items){
       }
     }
     if(!vals.length) continue;
-    const hourlySnaps=vals.map((x,i)=>({...x,key:String(i),name:String(i)}));
+    const hourlySnaps=vals.map((x,i)=>({...x,key:String(i),name:items[i]?.key ? MODELS[items[i].key]?.name || String(i) : String(i)}));
     const hc=consensusFor(hourlySnaps);
     const temp=hc.temp;
     const main=hc.main.length>=2 ? hc.main : hourlySnaps;
@@ -442,7 +442,7 @@ function renderDaily(items){
     const consensusMin=minConsensus.temp;
     const code=codes.length ? codes[Math.floor(codes.length/2)] : 0;
     const [ico,desc]=weatherInfo(code);
-    const modelCount=smnDay?.temps?.length ? items.length : openItems.length;
+    const modelCount=openItems.length + (smnDay?.temps?.length ? 1 : 0);
     const el=document.createElement('div');
     el.className='day';
     el.innerHTML=`<div class="name">${i===0?'Hoy':fmtDay(dayKey)}</div><div class="icon">${ico}</div><div class="desc">${desc} · ${modelCount} mod.</div><div class="max">${Math.round(consensusMax)}°</div><div class="min">${Math.round(consensusMin)}°</div>`;
