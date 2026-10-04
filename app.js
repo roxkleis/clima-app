@@ -27,6 +27,56 @@ const weatherMap = {
   95:["⛈️","Tormenta"],96:["⛈️","Tormenta con granizo"],99:["⛈️","Tormenta fuerte"]
 };
 const weatherInfo = code => weatherMap[code] || ["🌤️","Condición variable"];
+
+// Iconografía adaptada al ciclo solar real de la ubicación.
+// De noche, los estados despejados/parcialmente despejados usan luna
+// en lugar de sol; lluvia, nieve, niebla y tormenta mantienen sus iconos.
+function isNightTime(date,lat,lon){
+  if(!(date instanceof Date) || Number.isNaN(date.getTime())) return false;
+  if(!Number.isFinite(lat) || !Number.isFinite(lon)) return date.getHours() < 7 || date.getHours() >= 19;
+
+  const dayOfYear = Math.floor((Date.UTC(date.getFullYear(),date.getMonth(),date.getDate()) - Date.UTC(date.getFullYear(),0,0)) / 86400000);
+  const gamma = 2*Math.PI/365 * (dayOfYear - 1 + (date.getHours() - 12)/24);
+  const eqtime = 229.18 * (
+    0.000075 + 0.001868*Math.cos(gamma) - 0.032077*Math.sin(gamma)
+    - 0.014615*Math.cos(2*gamma) - 0.040849*Math.sin(2*gamma)
+  );
+  const decl = 0.006918 - 0.399912*Math.cos(gamma) + 0.070257*Math.sin(gamma)
+    - 0.006758*Math.cos(2*gamma) + 0.000907*Math.sin(2*gamma)
+    - 0.002697*Math.cos(3*gamma) + 0.00148*Math.sin(3*gamma);
+  const zenith = 90.833 * Math.PI/180;
+  const latRad = lat * Math.PI/180;
+  const cosHour = (Math.cos(zenith) / (Math.cos(latRad)*Math.cos(decl))) - Math.tan(latRad)*Math.tan(decl);
+
+  // Polar day/night: si no hay amanecer/atardecer calculable, usamos
+  // la elevación solar aproximada como respaldo horario.
+  if(cosHour > 1 || cosHour < -1) return date.getHours() < 7 || date.getHours() >= 19;
+
+  const hourAngle = Math.acos(cosHour) * 180/Math.PI;
+  const sunriseUTC = 720 - 4*(lon + hourAngle) - eqtime;
+  const sunsetUTC = 720 - 4*(lon - hourAngle) - eqtime;
+  const offsetMinutes = -date.getTimezoneOffset();
+  const minutesUTC = date.getUTCHours()*60 + date.getUTCMinutes() + date.getUTCSeconds()/60;
+  const sunriseLocal = (sunriseUTC + offsetMinutes + 1440) % 1440;
+  const sunsetLocal = (sunsetUTC + offsetMinutes + 1440) % 1440;
+  const localMinutes = date.getHours()*60 + date.getMinutes() + date.getSeconds()/60;
+
+  return localMinutes < sunriseLocal || localMinutes >= sunsetLocal;
+}
+
+function weatherInfoAtTime(code,date,lat,lon){
+  const [dayIcon,desc] = weatherInfo(code);
+  if(!isNightTime(date,lat,lon)) return [dayIcon,desc];
+
+  const nightMap = {
+    0:["🌙","Despejado"],
+    1:["🌙","Principalmente despejado"],
+    2:["☁️🌙","Parcialmente nublado"],
+    3:["☁️","Nublado"]
+  };
+  return nightMap[code] || [dayIcon,desc];
+}
+
 const fmtHour = iso => new Intl.DateTimeFormat('es-AR',{hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
 const fmtDay = iso => new Intl.DateTimeFormat('es-AR',{weekday:'short',day:'2-digit'}).format(new Date(`${iso}T12:00:00`)).replace('.','');
 const setMessage = text => els.message.textContent = text;
@@ -271,12 +321,14 @@ function renderModelDetails(snaps,consensus){
   }
 }
 
-function observationWeatherInfo(observation){
+function observationWeatherInfo(observation,lat,lon){
   if(!observation) return null;
   const cloud=Number(observation.cloudCover);
+  const observationDate=new Date(observation.time || Date.now());
+  const night=isNightTime(observationDate,lat,lon);
   if(Number.isFinite(cloud)){
-    if(cloud <= 10) return ["☀️","Despejado"];
-    if(cloud <= 50) return ["⛅","Parcialmente nublado"];
+    if(cloud <= 10) return [night ? "🌙" : "☀️","Despejado"];
+    if(cloud <= 50) return [night ? "☁️🌙" : "⛅","Parcialmente nublado"];
     if(cloud <= 85) return ["☁️","Nublado"];
     return ["☁️","Cubierto"];
   }
@@ -293,8 +345,11 @@ function renderMain(items,position,placeName=null,observation=null){
   const targetIso=smn?.data?.data?.[0]?.validTime || null;
   const snaps=items.map(x=>currentSnapshot(x,targetIso));
   const c=consensusFor(snaps);
-  const observedCondition=observationWeatherInfo(observation);
-  const [icon,condition]=observedCondition || weatherInfo(consensusWeatherCode(snaps));
+  const lat=position.coords.latitude;
+  const lon=position.coords.longitude;
+  const currentDate=new Date(observation?.time || targetIso || Date.now());
+  const observedCondition=observationWeatherInfo(observation,lat,lon);
+  const [icon,condition]=observedCondition || weatherInfoAtTime(consensusWeatherCode(snaps),currentDate,lat,lon);
 
   els.location.textContent=placeName || 'Mi ubicación';
   els.updated.textContent=`Actualizado ${new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}`;
@@ -347,8 +402,8 @@ function renderMain(items,position,placeName=null,observation=null){
   els.consensusBadge.classList.toggle('split',c.split22);
 
   renderModelDetails(snaps,c);
-  renderHourly(items);
-  renderDaily(items);
+  renderHourly(items,lat,lon);
+  renderDaily(items,lat,lon);
 
   const failed=Object.keys(MODELS).filter(k=>!items.some(x=>x.key===k));
   setMessage(failed.length
@@ -360,7 +415,7 @@ function findOpenMeteoIndexByTime(data, targetTime){
   return currentIndex(data,targetTime);
 }
 
-function renderHourly(items){
+function renderHourly(items,lat=null,lon=null){
   const smn=items.find(x=>x.key==='smn');
   const smnHours=smn?.data?.data || [];
   const fallback=items.find(x=>x.key!=='smn');
@@ -393,7 +448,7 @@ function renderHourly(items){
       : (precipVals.length ? median(precipVals) : 0);
     const codeVals=main.filter(x=>Number.isFinite(x.code)).map(x=>x.code);
     const code=codeVals.length ? codeVals[Math.floor(codeVals.length/2)] : 0;
-    const [ico]=weatherInfo(code);
+    const [ico]=weatherInfoAtTime(code,new Date(targetTime),lat,lon);
     const el=document.createElement('div');
     el.className=`hour ${off===0?'now':''}`;
     el.innerHTML=`<div class="time">${off===0?'Ahora':fmtHour(targetTime)}</div><div class="icon">${ico}</div><div class="temp">${Math.round(temp)}°</div><div class="rain">💧 ${precip.toFixed(1)} mm</div>`;
@@ -414,7 +469,7 @@ function smnDailyMap(smn){
   return result;
 }
 
-function renderDaily(items){
+function renderDaily(items,lat=null,lon=null){
   const openItems=items.filter(x=>x.key!=='smn');
   const base=openItems[0]?.data.daily;
   const smn=items.find(x=>x.key==='smn');
@@ -441,6 +496,8 @@ function renderDaily(items){
     const consensusMax=maxConsensus.temp;
     const consensusMin=minConsensus.temp;
     const code=codes.length ? codes[Math.floor(codes.length/2)] : 0;
+    // El resumen diario representa principalmente las horas diurnas,
+    // por eso conserva la iconografía solar de cada condición.
     const [ico,desc]=weatherInfo(code);
     const modelCount=openItems.length + (smnDay?.temps?.length ? 1 : 0);
     const el=document.createElement('div');
