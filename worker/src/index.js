@@ -441,14 +441,16 @@ async function getW2BSMNObservation(lat, lon) {
   const stationCandidates = await getW2BStationCatalog();
   if (!stationCandidates.length) throw new Error("W2B: no hay estaciones SMN con coordenadas");
 
-  stationCandidates.sort((a, b) =>
-    haversineKm(lat, lon, a.lat, a.lon) - haversineKm(lat, lon, b.lat, b.lon)
-  );
-  const station = stationCandidates[0];
-  station.distanceKm = haversineKm(lat, lon, station.lat, station.lon);
+  // No dependemos del WIGOS ID del catálogo para encontrar la observación.
+  // W2B puede publicar el mismo sitio con identificadores distintos entre
+  // colecciones SYNOP/AUTO. Buscamos primero observaciones recientes por
+  // coordenadas dentro de un radio amplio y elegimos la más cercana.
+  const nearestStation = [...stationCandidates].sort(
+    (a, b) => haversineKm(lat, lon, a.lat, a.lon) - haversineKm(lat, lon, b.lat, b.lon)
+  )[0];
 
-  const delta = 0.08;
-  const bbox = [station.lon - delta, station.lat - delta, station.lon + delta, station.lat + delta].join(",");
+  const delta = 0.12;
+  const bbox = [lon - delta, lat - delta, lon + delta, lat + delta].join(",");
   const candidates = [];
 
   for (const collection of SMN_OBS_COLLECTIONS) {
@@ -457,27 +459,61 @@ async function getW2BSMNObservation(lat, lon) {
       const data = await smnJson(
         SMN_OBS_API + "/collections/" + encodeURIComponent(collection) + "/items?" + params
       );
+
       for (const feature of data.features || []) {
         const p = feature?.properties || {};
-        const stationId = String(p.wigos_station_identifier || "");
         const reportTime = p.reportTime;
         const temp = Number(p.value);
-        if (stationId !== station.id || p.name !== "air_temperature" || !reportTime || !Number.isFinite(temp)) continue;
+        const c = feature?.geometry?.coordinates;
+        if (p.name !== "air_temperature" || !reportTime || !Number.isFinite(temp) ||
+            !Array.isArray(c) || c.length < 2) continue;
+
+        const obsLon = Number(c[0]);
+        const obsLat = Number(c[1]);
+        if (!Number.isFinite(obsLat) || !Number.isFinite(obsLon)) continue;
+
         const ageMinutes = (Date.now() - new Date(reportTime).getTime()) / 60000;
         if (!Number.isFinite(ageMinutes) || ageMinutes < -10 || ageMinutes > 180) continue;
-        candidates.push({collection, stationId, temp, reportTime, ageMinutes});
+
+        candidates.push({
+          collection,
+          stationId: String(p.wigos_station_identifier || feature.id || ""),
+          stationName: String(p.stationName || p.station_name || p.description || ""),
+          temp,
+          reportTime,
+          ageMinutes,
+          lat: obsLat,
+          lon: obsLon,
+          distanceKm: haversineKm(lat, lon, obsLat, obsLon)
+        });
       }
     } catch (error) {
       console.log("smn-observation-query-error", collection, error?.message || String(error));
     }
   }
 
-  if (!candidates.length) throw new Error("W2B: no hay temperatura reciente para " + station.name);
+  if (!candidates.length) {
+    throw new Error("W2B: no hay temperatura reciente en el radio de observación");
+  }
+
   candidates.sort((a, b) =>
-    new Date(b.reportTime) - new Date(a.reportTime) ||
-    (a.collection === "urn:wmo:md:ar-smn:slt0ci" ? -1 : 1)
+    a.distanceKm - b.distanceKm ||
+    new Date(b.reportTime) - new Date(a.reportTime)
   );
   const chosen = candidates[0];
+
+  const catalogStation = stationCandidates.find(s =>
+    s.id === chosen.stationId ||
+    haversineKm(chosen.lat, chosen.lon, s.lat, s.lon) < 1
+  ) || nearestStation;
+
+  const station = {
+    ...(catalogStation || {}),
+    name: catalogStation?.name || chosen.stationName || "Estación SMN",
+    lat: chosen.lat,
+    lon: chosen.lon,
+    distanceKm: chosen.distanceKm
+  };
 
   const values = {};
   try {
@@ -485,11 +521,17 @@ async function getW2BSMNObservation(lat, lon) {
     const data = await smnJson(
       SMN_OBS_API + "/collections/" + encodeURIComponent(chosen.collection) + "/items?" + params
     );
+
     for (const feature of data.features || []) {
       const p = feature?.properties || {};
-      if (String(p.wigos_station_identifier || "") !== chosen.stationId || p.reportTime !== chosen.reportTime || !p.name) continue;
-      if (p.name === "present_weather" && p.description) values.present_weather = p.description;
-      else if (Number.isFinite(Number(p.value))) values[p.name] = Number(p.value);
+      const featureStationId = String(p.wigos_station_identifier || feature.id || "");
+      if (featureStationId !== chosen.stationId || p.reportTime !== chosen.reportTime || !p.name) continue;
+
+      if (p.name === "present_weather" && p.description) {
+        values.present_weather = p.description;
+      } else if (Number.isFinite(Number(p.value))) {
+        values[p.name] = Number(p.value);
+      }
     }
   } catch (error) {
     console.log("smn-observation-detail-warning", error?.message || String(error));
@@ -510,7 +552,6 @@ async function getW2BSMNObservation(lat, lon) {
     collection: chosen.collection
   };
 }
-
 async function getNearestSMNObservation(lat, lon) {
   try {
     return await getTiepreObservation(lat, lon);
