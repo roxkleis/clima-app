@@ -1,5 +1,5 @@
-const CACHE = "clima-consenso-v7";
-const ASSETS = ["./icons/icon.svg","./","./index.html","./styles.css?v=6","./app.js?v=16","./manifest.json?v=2"];
+const CACHE = "clima-consenso-v8";
+const ASSETS = ["./icons/icon.svg","./","./index.html","./styles.css?v=5","./observation-ui.css?v=1","./app.js?v=16","./observation-ui.js?v=1","./manifest.json?v=2"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
@@ -38,20 +38,18 @@ function cleanSmnNotification(data) {
   const match = rawTitle.match(/^⚠️\s*Alerta SMN\s+(roja|naranja|amarilla):\s*(.+)$/i);
   if (!match) return data;
 
-  const level = match[1].toLowerCase();
+  const color = match[1].toLowerCase();
   const event = match[2].trim();
   let body = String(data.body || "").replace(/\s+/g, " ").trim();
-
-  // El CAP puede traer headline + description y repetir el mismo evento.
-  const upperBody = body.toUpperCase();
-  const upperEvent = event.toUpperCase();
-  const eventIndex = upperBody.lastIndexOf(upperEvent);
-  if (eventIndex > 0) body = body.slice(eventIndex).trim();
+  const headline = body.split(/\.\s+/)[0]?.trim() || "";
+  if (headline && body.toLowerCase().startsWith(headline.toLowerCase())) {
+    body = body.slice(headline.length).replace(/^\.?\s*/, "").trim();
+  }
 
   return {
     ...data,
-    title: `⚠️ SMN · Alerta ${level.charAt(0).toUpperCase() + level.slice(1)}`,
-    body: `${event}${body && body.toUpperCase() !== event.toUpperCase() ? " · " + body : ""}`,
+    title: `⚠️ SMN · Alerta ${color}`,
+    body: event + (body ? ` · ${body}` : "")
   };
 }
 
@@ -60,7 +58,6 @@ self.addEventListener("push", event => {
   try {
     if(event.data) data = event.data.json();
   } catch (_) {}
-
   data = cleanSmnNotification(data);
 
   event.waitUntil(
@@ -77,11 +74,17 @@ self.addEventListener("push", event => {
 
 self.addEventListener("notificationclick", event => {
   event.notification.close();
-  const target = event.notification.data?.url || "./";
-  event.waitUntil(clients.matchAll({type:"window",includeUncontrolled:true}).then(list => {
-    for(const client of list){
-      if("focus" in client){ client.navigate(target); return client.focus(); }
-    }
-    if(clients.openWindow) return clients.openWindow(target);
-  }));
+  const url = event.notification.data?.url || "./";
+  event.waitUntil(
+    clients.matchAll({type:"window", includeUncontrolled:true}).then(list => {
+      for(const client of list){
+        if("focus" in client){
+          client.focus();
+          if("navigate" in client) client.navigate(url);
+          return;
+        }
+      }
+      if(clients.openWindow) return clients.openWindow(url);
+    })
+  );
 });
