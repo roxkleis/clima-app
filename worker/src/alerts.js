@@ -11,7 +11,7 @@ const esc = s => String(s ?? "").replace(/&amp;/g,"&").replace(/&lt;/g,"<").repl
 function tagText(xml, tag, fallback=""){
   const re = new RegExp("<(?:[\\w-]+:)?"+tag+"\\b[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?"+tag+">","i");
   const m = xml.match(re);
-  return m ? esc(m[1].replace(/<!\[CDATA\[/g,"").replace(/\]\]>/g,"").trim()) : fallback;
+  return m ? esc(m[1].replace(/<!\\[CDATA\\[/g,"").replace(/\\]\\]>/g,"").trim()) : fallback;
 }
 function tagBlocks(xml, tag){
   const re = new RegExp("<(?:[\\w-]+:)?"+tag+"\\b[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?"+tag+">","gi");
@@ -21,7 +21,7 @@ function firstTag(block, tag, fallback=""){ return tagText(block,tag,fallback); 
 
 function parsePolygon(area){
   const raw = firstTag(area,"polygon","");
-  const points = raw.trim().split(/\s+/).map(p=>p.split(",").map(Number)).filter(p=>p.length===2 && p.every(Number.isFinite));
+  const points = raw.trim().split(/\\s+/).map(p=>p.split(",").map(Number)).filter(p=>p.length===2 && p.every(Number.isFinite));
   return points.length >= 3 ? points : [];
 }
 function pointInPolygon(lat,lon,poly){
@@ -36,7 +36,7 @@ function pointInPolygon(lat,lon,poly){
 }
 function parseCap(xml){
   const alerts = [];
-  const matches = xml.match(/<alert\b[\s\S]*?<\/alert>/gi);
+  const matches = xml.match(/<alert\\b[\\s\\S]*?<\\/alert>/gi);
   const blocks = matches?.length ? matches : [xml];
 
   for(const block of blocks){
@@ -77,10 +77,10 @@ async function fetchCapAlerts(){
   if(alerts.length) return alerts;
 
   // Algunos feeds CAP publican un RSS/índice que apunta a los XML individuales.
-  const links=[...xml.matchAll(/<(?:[\w-]+:)?(?:link|guid)\b[^>]*?(?:href=["']([^"']+)["']|>(https?:[^<]+)<)/gi)]
+  const links=[...xml.matchAll(/<(?:[\\w-]+:)?(?:link|guid)\\b[^>]*?(?:href=[\"']([^\"']+)[\"']|>(https?:[^<]+)<)/gi)]
     .map(m=>m[1]||m[2]).filter(Boolean)
     .map(u=>u.replace(/&amp;/g,"&"))
-    .filter(u=>/^https?:\/\//i.test(u))
+    .filter(u=>/^https?:\\/\\//i.test(u))
     .slice(0,20);
 
   for(const url of [...new Set(links)]){
@@ -108,7 +108,7 @@ function alertCovers(a,lat,lon){
 
 function formatAlertPayload(a){
   const color = a.severity==="Extreme" ? "roja" : a.severity==="Severe" ? "naranja" : "amarilla";
-  const desc = (a.description||"").replace(/\s+/g," ").trim();
+  const desc = (a.description||"").replace(/\\s+/g," ").trim();
   const extra = desc ? " "+desc.slice(0,180) : "";
   return {
     title: `⚠️ Alerta SMN ${color}: ${a.event}`,
@@ -126,8 +126,12 @@ async function ensureSchema(env){
     PRIMARY KEY(event_key, endpoint)
   )`).run();
   const cols=await env.DB.prepare("PRAGMA table_info(push_subscriptions)").all();
-  if(!(cols.results||[]).some(x=>x.name==="timezone")){
+  const names=new Set((cols.results||[]).map(x=>x.name));
+  if(!names.has("timezone")){
     await env.DB.prepare("ALTER TABLE push_subscriptions ADD COLUMN timezone TEXT DEFAULT 'America/Argentina/Buenos_Aires'").run();
+  }
+  if(!names.has("night_minimum")){
+    await env.DB.prepare("ALTER TABLE push_subscriptions ADD COLUMN night_minimum INTEGER NOT NULL DEFAULT 1").run();
   }
 }
 
@@ -158,10 +162,16 @@ function localParts(date,tz){
   return {date:`${p.year}-${p.month}-${p.day}`,hour:Number(p.hour),minute:Number(p.minute)};
 }
 
+function nextLocalDate(dateString){
+  const d=new Date(`${dateString}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate()+1);
+  return d.toISOString().slice(0,10);
+}
+
 function modelUrl(base,lat,lon,tz){
   const q=new URLSearchParams({
     latitude:String(lat),longitude:String(lon),
-    hourly:"precipitation,weather_code,wind_gusts_10m,wind_speed_10m",
+    hourly:"temperature_2m,precipitation,weather_code,wind_gusts_10m,wind_speed_10m",
     daily:"temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
     timezone:tz,forecast_days:"2"
   });
@@ -174,8 +184,8 @@ async function fetchModel(base,lat,lon,tz){
   return await r.json();
 }
 
-async function fetchSmnForecast(baseUrl,lat,lon){
-  const r=await fetch(`${baseUrl}/forecast?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&hours=6`,{cache:"no-store"});
+async function fetchSmnForecast(baseUrl,lat,lon,hours=6){
+  const r=await fetch(`${baseUrl}/forecast?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&hours=${hours}`,{cache:"no-store"});
   if(!r.ok) throw new Error("SMN forecast HTTP "+r.status);
   return await r.json();
 }
@@ -234,6 +244,91 @@ function consensusDaily(datas){
   }
   const avg=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
   return {max:avg(maxs),min:avg(mins),precip:avg(precs),code:codes.length?Math.max(...codes):0,count:maxs.length};
+}
+
+function hourlyTemperature(data,targetDate,tz){
+  const h=data?.hourly;
+  if(!h?.time?.length) return null;
+  const values=[];
+  for(let i=0;i<h.time.length;i++){
+    const time=String(h.time[i]);
+    if(!time.startsWith(`${targetDate}T`)) continue;
+    const hour=Number(time.slice(11,13));
+    if(hour<0 || hour>5) continue;
+    const temp=Number(h.temperature_2m?.[i]);
+    if(Number.isFinite(temp)) values.push(temp);
+  }
+  return values.length ? Math.min(...values) : null;
+}
+
+function smnNightMinimum(data,targetDate,tz){
+  const values=[];
+  for(const item of data?.data||[]){
+    const t=Number(item.temperature);
+    if(!Number.isFinite(t) || !item.validTime) continue;
+    const local=localParts(new Date(item.validTime),tz);
+    if(local.date===targetDate && local.hour>=0 && local.hour<=5) values.push(t);
+  }
+  return values.length ? Math.min(...values) : null;
+}
+
+function consensusNightMinimum(values){
+  const nums=values.filter(Number.isFinite).map(Number);
+  if(!nums.length) return null;
+  const rounded=nums.map(Math.round);
+  let best=[];
+  for(let i=0;i<rounded.length;i++){
+    const group=[];
+    for(let j=0;j<rounded.length;j++){
+      if(Math.abs(rounded[j]-rounded[i])<=2) group.push(j);
+    }
+    if(group.length>best.length) best=group;
+  }
+  const selected=best.length>=2 ? best.map(i=>nums[i]) : nums;
+  selected.sort((a,b)=>a-b);
+  const mid=Math.floor(selected.length/2);
+  const value=selected.length%2 ? selected[mid] : (selected[mid-1]+selected[mid])/2;
+  return Math.round(value);
+}
+
+async function runNightMinimum(env,rows,now){
+  for(const row of rows){
+    if(!row.night_minimum || !Number.isFinite(Number(row.lat)) || !Number.isFinite(Number(row.lon))) continue;
+    const tz=row.timezone || "America/Argentina/Buenos_Aires";
+    const lp=localParts(now,tz);
+    if(lp.hour!==20 || lp.minute>=15) continue;
+
+    const targetDate=nextLocalDate(lp.date);
+    const key=`night-min:${targetDate}`;
+    if(await alreadyDelivered(env,key,row.endpoint)) continue;
+
+    try{
+      const [ecmwf,gfs,icon,smn]=await Promise.all([
+        fetchModel(OPEN_MODELS.ecmwf,row.lat,row.lon,tz),
+        fetchModel(OPEN_MODELS.gfs,row.lat,row.lon,tz),
+        fetchModel(OPEN_MODELS.icon,row.lat,row.lon,tz),
+        fetchSmnForecast(env.WORKER_BASE_URL,row.lat,row.lon,12)
+      ]);
+      const minima=[
+        hourlyTemperature(ecmwf,targetDate,tz),
+        hourlyTemperature(gfs,targetDate,tz),
+        hourlyTemperature(icon,targetDate,tz),
+        smnNightMinimum(smn,targetDate,tz)
+      ].filter(Number.isFinite);
+      const minimum=consensusNightMinimum(minima);
+      if(!Number.isFinite(minimum)) continue;
+
+      const payload={
+        title:"🌙 Esta noche",
+        body:`Se esperan mínimas de ${minimum}° esta noche.`,
+        tag:key,
+        url:"./"
+      };
+      await deliver(env,row,key,payload);
+    }catch(error){
+      console.log("night-minimum error",row.endpoint,error?.message||error);
+    }
+  }
 }
 
 async function runStormAndDaily(env,rows,now){
@@ -327,11 +422,12 @@ async function runSmnAlerts(env,rows,now){
 
 export async function runNotificationEngine(env){
   await ensureSchema(env);
-  const result=await env.DB.prepare(`SELECT endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,COALESCE(timezone,'America/Argentina/Buenos_Aires') AS timezone FROM push_subscriptions ORDER BY id LIMIT 40`).all();
+  const result=await env.DB.prepare(`SELECT endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,night_minimum,COALESCE(timezone,'America/Argentina/Buenos_Aires') AS timezone FROM push_subscriptions ORDER BY id LIMIT 40`).all();
   const rows=result.results||[];
   if(!rows.length) return {ok:true,subscriptions:0};
   const now=new Date();
   await runSmnAlerts(env,rows,now);
+  await runNightMinimum(env,rows,now);
   await runStormAndDaily(env,rows,now);
   return {ok:true,subscriptions:rows.length};
 }
