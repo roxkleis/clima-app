@@ -1,4 +1,4 @@
-const CACHE = "clima-consenso-v6";
+const CACHE = "clima-consenso-v7";
 const ASSETS = ["./icons/icon.svg","./","./index.html","./styles.css?v=6","./app.js?v=16","./manifest.json?v=2"];
 
 self.addEventListener("install", event => {
@@ -33,6 +33,27 @@ self.addEventListener("fetch", event => {
   );
 });
 
+function cleanSmnNotification(data) {
+  const rawTitle = String(data.title || "");
+  const match = rawTitle.match(/^⚠️\s*Alerta SMN\s+(roja|naranja|amarilla):\s*(.+)$/i);
+  if (!match) return data;
+
+  const level = match[1].toLowerCase();
+  const event = match[2].trim();
+  let body = String(data.body || "").replace(/\s+/g, " ").trim();
+
+  // El CAP puede traer headline + description y repetir el mismo evento.
+  const upperBody = body.toUpperCase();
+  const upperEvent = event.toUpperCase();
+  const eventIndex = upperBody.lastIndexOf(upperEvent);
+  if (eventIndex > 0) body = body.slice(eventIndex).trim();
+
+  return {
+    ...data,
+    title: `⚠️ SMN · Alerta ${level.charAt(0).toUpperCase() + level.slice(1)}`,
+    body: `${event}${body && body.toUpperCase() !== event.toUpperCase() ? " · " + body : ""}`,
+  };
+}
 
 self.addEventListener("push", event => {
   let data = {title:"Clima by richardspulgar", body:"Nueva actualización meteorológica."};
@@ -40,12 +61,15 @@ self.addEventListener("push", event => {
     if(event.data) data = event.data.json();
   } catch (_) {}
 
+  data = cleanSmnNotification(data);
+
   event.waitUntil(
     self.registration.showNotification(data.title || "Clima by richardspulgar", {
       body: data.body || "",
       icon: "./icons/icon-192.png",
       badge: "./icons/icon-192.png",
       tag: data.tag || "clima-alerta",
+      renotify: false,
       data: {url: data.url || "./"}
     })
   );
