@@ -1,139 +1,16 @@
 import { sendPush } from "./push.js";
 
-const CAP_FEED = "https://ssl.smn.gob.ar/CAP/AR.php";
+import { fetchRegionalAlerts, alertPayload } from "./smn-alerts.js";
+
+const TIMEZONE = "America/Argentina/Buenos_Aires";
+const SUMMARY_CRON = "0,5,10 8,23 * * *";
+const ALERT_CRON = "*/5 * * * *";
+const STORM_CRON = "1,16,31,46 * * * *";
 const OPEN_MODELS = {
   ecmwf: "https://api.open-meteo.com/v1/ecmwf",
   gfs: "https://api.open-meteo.com/v1/gfs",
   icon: "https://api.open-meteo.com/v1/dwd-icon",
 };
-
-const esc = s => String(s ?? "").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'");
-function tagText(xml, tag, fallback=""){
-  const re = new RegExp("<(?:[\\w-]+:)?"+tag+"\\b[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?"+tag+">","i");
-  const m = xml.match(re);
-  return m ? esc(m[1].replace(/<!\\[CDATA\\[/g,"").replace(/\\]\\]>/g,"").trim()) : fallback;
-}
-function tagBlocks(xml, tag){
-  const re = new RegExp("<(?:[\\w-]+:)?"+tag+"\\b[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?"+tag+">","gi");
-  return [...xml.matchAll(re)].map(m=>m[1]);
-}
-function firstTag(block, tag, fallback=""){ return tagText(block,tag,fallback); }
-
-function parsePolygon(area){
-  const raw = firstTag(area,"polygon","");
-  const points = raw.trim().split(/\\s+/).map(p=>p.split(",").map(Number)).filter(p=>p.length===2 && p.every(Number.isFinite));
-  return points.length >= 3 ? points : [];
-}
-function pointInPolygon(lat,lon,poly){
-  if(poly.length<3) return false;
-  let inside=false;
-  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
-    const yi=poly[i][0], xi=poly[i][1], yj=poly[j][0], xj=poly[j][1];
-    const hit=((yi>lat)!==(yj>lat)) && (lon < (xj-xi)*(lat-yi)/(yj-yi)+xi);
-    if(hit) inside=!inside;
-  }
-  return inside;
-}
-function parseCap(xml){
-  const alerts = [];
-  const matches = xml.match(/<alert\\b[\\s\\S]*?<\\/alert>/gi);
-  const blocks = matches?.length ? matches : [xml];
-
-  for(const block of blocks){
-    const identifier=firstTag(block,"identifier","");
-    const status=firstTag(block,"status","Actual");
-    const msgType=firstTag(block,"msgType","Alert");
-    if(!identifier || (status!=="Actual" && status!=="Test")) continue;
-    const infos=tagBlocks(block,"info");
-    for(const info of infos.length?infos:[block]){
-      const event=firstTag(info,"event","Alerta meteorológica");
-      const severity=firstTag(info,"severity","Unknown");
-      const certainty=firstTag(info,"certainty","Unknown");
-      const urgency=firstTag(info,"urgency","Unknown");
-      const headline=firstTag(info,"headline",event);
-      const description=firstTag(info,"description","");
-      const instruction=firstTag(info,"instruction","");
-      const effective=firstTag(info,"effective",firstTag(block,"sent",""));
-      const onset=firstTag(info,"onset",effective);
-      const expires=firstTag(info,"expires","");
-      const areas=tagBlocks(info,"area");
-      for(const area of areas.length?areas:[info]){
-        alerts.push({
-          identifier, event, severity, certainty, urgency, headline, description, instruction,
-          effective, onset, expires, areaDesc:firstTag(area,"areaDesc",""),
-          polygon:parsePolygon(area)
-        });
-      }
-    }
-  }
-  return alerts;
-}
-
-async function fetchCapAlerts(){
-  const r=await fetch(CAP_FEED,{headers:{"Accept":"application/xml,text/xml,*/*","User-Agent":"Clima-by-richardspulgar/1.0"},cache:"no-store"});
-  if(!r.ok) throw new Error("SMN CAP HTTP "+r.status);
-  const xml=await r.text();
-  let alerts=parseCap(xml);
-  if(alerts.length) return alerts;
-
-  // Algunos feeds CAP publican un RSS/índice que apunta a los XML individuales.
-  const links=[...xml.matchAll(/<(?:[\\w-]+:)?(?:link|guid)\\b[^>]*?(?:href=[\"']([^\"']+)[\"']|>(https?:[^<]+)<)/gi)]
-    .map(m=>m[1]||m[2]).filter(Boolean)
-    .map(u=>u.replace(/&amp;/g,"&"))
-    .filter(u=>/^https?:\\/\\//i.test(u))
-    .slice(0,20);
-
-  for(const url of [...new Set(links)]){
-    try{
-      const rr=await fetch(url,{headers:{"Accept":"application/xml,text/xml,*/*","User-Agent":"Clima-by-richardspulgar/1.0"},cache:"no-store"});
-      if(rr.ok) alerts.push(...parseCap(await rr.text()));
-    }catch(_){}
-  }
-  return alerts;
-}
-
-function alertActive(a,now){
-  if(a.expires){
-    const t=Date.parse(a.expires);
-    if(Number.isFinite(t) && t<now) return false;
-  }
-  return true;
-}
-function severityRank(s){ return ({Extreme:4,Severe:3,Moderate:2,Minor:1,Unknown:0})[s]||0; }
-
-function alertCovers(a,lat,lon){
-  if(a.polygon?.length>=3) return pointInPolygon(lat,lon,a.polygon);
-  return false;
-}
-
-function formatAlertPayload(a){
-  const color = a.severity==="Extreme" ? "roja" : a.severity==="Severe" ? "naranja" : "amarilla";
-  const desc = (a.description||"").replace(/\\s+/g," ").trim();
-  const extra = desc ? " "+desc.slice(0,180) : "";
-  return {
-    title: `⚠️ Alerta SMN ${color}: ${a.event}`,
-    body: `${a.headline || "El SMN emitió una alerta para tu zona."}${extra}`,
-    tag: `smn-${a.identifier}-${a.severity}`,
-    url: "https://ws2.smn.gob.ar/alertas"
-  };
-}
-
-async function ensureSchema(env){
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS notification_deliveries (
-    event_key TEXT NOT NULL,
-    endpoint TEXT NOT NULL,
-    sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY(event_key, endpoint)
-  )`).run();
-  const cols=await env.DB.prepare("PRAGMA table_info(push_subscriptions)").all();
-  const names=new Set((cols.results||[]).map(x=>x.name));
-  if(!names.has("timezone")){
-    await env.DB.prepare("ALTER TABLE push_subscriptions ADD COLUMN timezone TEXT DEFAULT 'America/Argentina/Buenos_Aires'").run();
-  }
-  if(!names.has("night_minimum")){
-    await env.DB.prepare("ALTER TABLE push_subscriptions ADD COLUMN night_minimum INTEGER NOT NULL DEFAULT 1").run();
-  }
-}
 
 async function alreadyDelivered(env,eventKey,endpoint){
   const row=await env.DB.prepare("SELECT 1 AS ok FROM notification_deliveries WHERE event_key=? AND endpoint=? LIMIT 1").bind(eventKey,endpoint).first();
@@ -142,8 +19,9 @@ async function alreadyDelivered(env,eventKey,endpoint){
 async function markDelivered(env,eventKey,endpoint){
   await env.DB.prepare("INSERT OR IGNORE INTO notification_deliveries(event_key,endpoint) VALUES(?,?)").bind(eventKey,endpoint).run();
 }
-async function deliver(env,row,eventKey,payload){
+async function deliver(env,row,eventKey,payload,budget){
   if(await alreadyDelivered(env,eventKey,row.endpoint)) return false;
+  if (budget) budget.remaining--;
   const result=await sendPush({endpoint:row.endpoint,keys:{p256dh:row.p256dh,auth:row.auth}},payload,env);
   if(result.gone){
     await env.DB.prepare("DELETE FROM push_subscriptions WHERE endpoint=?").bind(row.endpoint).run();
@@ -234,144 +112,78 @@ function smnSeries(data){
   }));
 }
 
-function consensusDaily(datas){
-  const maxs=[],mins=[],precs=[],codes=[];
-  for(const d of datas){
-    if(Number.isFinite(Number(d?.daily?.temperature_2m_max?.[0]))) maxs.push(Number(d.daily.temperature_2m_max[0]));
-    if(Number.isFinite(Number(d?.daily?.temperature_2m_min?.[0]))) mins.push(Number(d.daily.temperature_2m_min[0]));
-    if(Number.isFinite(Number(d?.daily?.precipitation_sum?.[0]))) precs.push(Number(d.daily.precipitation_sum[0]));
-    if(Number.isFinite(Number(d?.daily?.weather_code?.[0]))) codes.push(Number(d.daily.weather_code[0]));
+
+const forecastUrl = new URL("https://api.open-meteo.com/v1/forecast");
+forecastUrl.search = new URLSearchParams({
+  latitude: "-34.543", longitude: "-58.713", timezone: TIMEZONE,
+  forecast_days: "2", hourly: "temperature_2m",
+  daily: "temperature_2m_min,temperature_2m_max,precipitation_probability_max"
+});
+
+export function summaryPayload(forecast, date, night) {
+  if (night) {
+    const target = nextLocalDate(date);
+    const hourly = forecast.hourly;
+    const temperatures = Array.from({ length: 6 }, (_, hour) =>
+      hourly?.temperature_2m?.[hourly?.time?.indexOf(target + "T0" + hour + ":00")]
+    );
+    if (!temperatures.every(Number.isFinite)) return null;
+    const min = Math.round(Math.min(...temperatures));
+    const max = Math.round(Math.max(...temperatures));
+    const middle = (min + max) / 2;
+    const condition = middle < 12 ? "fría" : middle < 18 ? "fresca" : middle < 24 ? "templada" : "calurosa";
+    return {
+      title: "🌙 Madrugada en San Miguel",
+      body: `Madrugada ${condition}: de ${min} a ${max} °C entre las 00:00 y las 05:00.`,
+      ttl: 4 * 60 * 60
+    };
   }
-  const avg=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
-  return {max:avg(maxs),min:avg(mins),precip:avg(precs),code:codes.length?Math.max(...codes):0,count:maxs.length};
+  const daily = forecast.daily;
+  const index = daily?.time?.indexOf(date);
+  const min = daily?.temperature_2m_min?.[index];
+  const max = daily?.temperature_2m_max?.[index];
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  const rain = daily.precipitation_probability_max?.[index];
+  return {
+    title: "🌤️ Hoy en San Miguel",
+    body: `Mínima ${Math.round(min)} °C · Máxima ${Math.round(max)} °C.` +
+      (Number.isFinite(rain) ? ` Probabilidad máxima de lluvia: ${rain} %.` : ""),
+    ttl: 3 * 60 * 60
+  };
 }
 
-function hourlyTemperature(data,targetDate,tz){
-  const h=data?.hourly;
-  if(!h?.time?.length) return null;
-  const values=[];
-  for(let i=0;i<h.time.length;i++){
-    const time=String(h.time[i]);
-    if(!time.startsWith(`${targetDate}T`)) continue;
-    const hour=Number(time.slice(11,13));
-    if(hour<0 || hour>5) continue;
-    const temp=Number(h.temperature_2m?.[i]);
-    if(Number.isFinite(temp)) values.push(temp);
-  }
-  return values.length ? Math.min(...values) : null;
-}
-
-function smnNightMinimum(data,targetDate,tz){
-  const values=[];
-  for(const item of data?.data||[]){
-    const t=Number(item.temperature);
-    if(!Number.isFinite(t) || !item.validTime) continue;
-    const local=localParts(new Date(item.validTime),tz);
-    if(local.date===targetDate && local.hour>=0 && local.hour<=5) values.push(t);
-  }
-  return values.length ? Math.min(...values) : null;
-}
-
-function consensusNightMinimum(values){
-  const nums=values.filter(Number.isFinite).map(Number);
-  if(!nums.length) return null;
-  const rounded=nums.map(Math.round);
-  let best=[];
-  for(let i=0;i<rounded.length;i++){
-    const group=[];
-    for(let j=0;j<rounded.length;j++){
-      if(Math.abs(rounded[j]-rounded[i])<=2) group.push(j);
+async function runSummary(env, rows, now) {
+  const local = localParts(now, TIMEZONE);
+  const night = local.hour === 20;
+  if ((!night && local.hour !== 5) || local.minute >= 15) return;
+  const key = night ? `night-min:${nextLocalDate(local.date)}` : `daily:${local.date}`;
+  const recipients = [];
+  for (const row of rows) {
+    if ((night ? row.night_minimum : row.daily_summary) && !await alreadyDelivered(env, key, row.endpoint)) {
+      recipients.push(row);
     }
-    if(group.length>best.length) best=group;
   }
-  const selected=best.length>=2 ? best.map(i=>nums[i]) : nums;
-  selected.sort((a,b)=>a-b);
-  const mid=Math.floor(selected.length/2);
-  const value=selected.length%2 ? selected[mid] : (selected[mid-1]+selected[mid])/2;
-  return Math.round(value);
-}
-
-async function runNightMinimum(env,rows,now){
-  for(const row of rows){
-    if(!row.night_minimum || !Number.isFinite(Number(row.lat)) || !Number.isFinite(Number(row.lon))) continue;
-    const tz=row.timezone || "America/Argentina/Buenos_Aires";
-    const lp=localParts(now,tz);
-    if(lp.hour!==20 || lp.minute>=15) continue;
-
-    const targetDate=nextLocalDate(lp.date);
-    const key=`night-min:${targetDate}`;
-    if(await alreadyDelivered(env,key,row.endpoint)) continue;
-
-    try{
-      const [ecmwf,gfs,icon,smn]=await Promise.all([
-        fetchModel(OPEN_MODELS.ecmwf,row.lat,row.lon,tz),
-        fetchModel(OPEN_MODELS.gfs,row.lat,row.lon,tz),
-        fetchModel(OPEN_MODELS.icon,row.lat,row.lon,tz),
-        fetchSmnForecast(env.WORKER_BASE_URL,row.lat,row.lon,12)
-      ]);
-      const minima=[
-        hourlyTemperature(ecmwf,targetDate,tz),
-        hourlyTemperature(gfs,targetDate,tz),
-        hourlyTemperature(icon,targetDate,tz),
-        smnNightMinimum(smn,targetDate,tz)
-      ].filter(Number.isFinite);
-      const minimum=consensusNightMinimum(minima);
-      if(!Number.isFinite(minimum)) continue;
-
-      const payload={
-        title:"🌙 Esta noche",
-        body:`Se esperan mínimas de ${minimum}° esta noche.`,
-        tag:key,
-        url:"./"
-      };
-      await deliver(env,row,key,payload);
-    }catch(error){
-      console.log("night-minimum error",row.endpoint,error?.message||error);
+  if (!recipients.length) return;
+  const response = await fetch(forecastUrl, { signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error(`Open-Meteo HTTP ${response.status}`);
+  const payload = summaryPayload(await response.json(), local.date, night);
+  if (!payload) throw new Error("Pronóstico incompleto");
+  for (const row of recipients) {
+    try {
+      await deliver(env, row, key, { ...payload, tag: key, url: "./" });
+    } catch (error) {
+      console.warn("summary-delivery", error?.message);
     }
   }
 }
 
-async function runStormAndDaily(env,rows,now){
-  const dueDaily=[];
-  const stormRows=rows.filter(r=>Number.isFinite(Number(r.lat))&&Number.isFinite(Number(r.lon)));
+async function runStorm(env, rows, now) {
+  const enabled = rows.filter(row => row.alerts_storm && row.lat != null && row.lon != null);
+  // Each storm check can use four forecast requests and one Web Push request.
+  const batchSize = 10;
+  const batch = Math.floor(now.getTime() / (15 * 60 * 1000)) % (Math.ceil(enabled.length / batchSize) || 1);
+  const stormRows = enabled.slice(batch * batchSize, (batch + 1) * batchSize);
   for(const row of stormRows){
-    const tz=row.timezone || "America/Argentina/Buenos_Aires";
-    const lp=localParts(now,tz);
-
-    if(row.daily_summary && lp.hour===8 && lp.minute<15){
-      const key=`daily:${lp.date}`;
-      if(!(await alreadyDelivered(env,key,row.endpoint))) dueDaily.push({row,key,tz});
-    }
-  }
-
-  for(const item of dueDaily){
-    try{
-      const [ecmwf,gfs,icon,smn]=await Promise.all([
-        fetchModel(OPEN_MODELS.ecmwf,item.row.lat,item.row.lon,item.tz),
-        fetchModel(OPEN_MODELS.gfs,item.row.lat,item.row.lon,item.tz),
-        fetchModel(OPEN_MODELS.icon,item.row.lat,item.row.lon,item.tz),
-        fetchSmnForecast(env.WORKER_BASE_URL,item.row.lat,item.row.lon)
-      ]);
-      const d=consensusDaily([ecmwf,gfs,icon]);
-      const smnTemps=(smn.data||[]).filter(x=>String(x.validTime).startsWith(item.key.slice(6))).map(x=>Number(x.temperature)).filter(Number.isFinite);
-      const maxVals=[d.max,...(smnTemps.length?[Math.max(...smnTemps)]:[])].filter(Number.isFinite);
-      const minVals=[d.min,...(smnTemps.length?[Math.min(...smnTemps)]:[])].filter(Number.isFinite);
-      const max=maxVals.length?maxVals.reduce((s,x)=>s+x,0)/maxVals.length:d.max;
-      const min=minVals.length?minVals.reduce((s,x)=>s+x,0)/minVals.length:d.min;
-      const rain=d.precip;
-      const rainText=Number.isFinite(rain)&&rain>=1?` Lluvia estimada: ${rain.toFixed(1)} mm.`:"";
-      const payload={
-        title:"🌤️ Resumen diario · Clima by richardspulgar",
-        body:`Hoy: máx ${Math.round(max)}° · mín ${Math.round(min)}°.${rainText}`,
-        tag:`daily-${item.key}`,
-        url:"./"
-      };
-      await deliver(env,item.row,item.key,payload);
-    }catch(error){ console.log("daily error",item.row.endpoint,error?.message||error); }
-  }
-
-  for(const row of stormRows){
-    if(!row.alerts_storm) continue;
     try{
       const [ecmwf,gfs,icon,smn]=await Promise.all([
         fetchModel(OPEN_MODELS.ecmwf,row.lat,row.lon,row.timezone||"America/Argentina/Buenos_Aires"),
@@ -399,35 +211,41 @@ async function runStormAndDaily(env,rows,now){
         url:"./"
       };
       await deliver(env,row,key,payload);
-    }catch(error){ console.log("storm error",row.endpoint,error?.message||error); }
+    }catch(error){ console.warn("storm-delivery", error?.message); }
   }
 }
 
-async function runSmnAlerts(env,rows,now){
-  const enabled=rows.filter(r=>r.alerts_smn&&Number.isFinite(Number(r.lat))&&Number.isFinite(Number(r.lon)));
-  if(!enabled.length) return;
-  let alerts=[];
-  try{ alerts=(await fetchCapAlerts()).filter(a=>alertActive(a,now)); }
-  catch(error){ console.log("SMN CAP error",error?.message||error); return; }
 
-  for(const row of enabled){
-    const matching=alerts.filter(a=>severityRank(a.severity)>=2 && alertCovers(a,row.lat,row.lon));
-    if(!matching.length) continue;
-    matching.sort((a,b)=>severityRank(b.severity)-severityRank(a.severity) || Date.parse(b.effective||0)-Date.parse(a.effective||0));
-    const a=matching[0];
-    const key=`smn:${a.identifier}:${row.endpoint}`;
-    await deliver(env,row,key,formatAlertPayload(a));
+async function runSmnAlerts(env, rows, now) {
+  const recipients = rows.filter(row => row.alerts_smn);
+  if (!recipients.length) return;
+  const alerts = await fetchRegionalAlerts(now);
+  // 1 índice + hasta 32 XML + hasta 16 envíos = 49 subconsultas externas.
+  const budget = { remaining: 16 };
+  for (const alert of alerts) {
+    const payload = alertPayload(alert, now);
+    for (const row of recipients) {
+      if (!budget.remaining) return;
+      try {
+        await deliver(env, row, alert.key, payload, budget);
+      } catch (error) {
+        console.warn("smn-delivery", error?.message);
+      }
+    }
   }
 }
 
-export async function runNotificationEngine(env){
-  await ensureSchema(env);
-  const result=await env.DB.prepare(`SELECT endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,night_minimum,COALESCE(timezone,'America/Argentina/Buenos_Aires') AS timezone FROM push_subscriptions ORDER BY id LIMIT 40`).all();
-  const rows=result.results||[];
-  if(!rows.length) return {ok:true,subscriptions:0};
-  const now=new Date();
-  await runSmnAlerts(env,rows,now);
-  await runNightMinimum(env,rows,now);
-  await runStormAndDaily(env,rows,now);
-  return {ok:true,subscriptions:rows.length};
+export async function runNotificationEngine(env, controller) {
+  const now = new Date(controller.scheduledTime);
+  const result = await env.DB.prepare(
+    "SELECT endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,night_minimum," +
+    "COALESCE(timezone,'America/Argentina/Buenos_Aires') AS timezone FROM push_subscriptions ORDER BY id LIMIT 40"
+  ).all();
+  const rows = result.results ?? [];
+  if (rows.length) {
+    if (controller.cron === SUMMARY_CRON) await runSummary(env, rows, now);
+    if (controller.cron === ALERT_CRON) await runSmnAlerts(env, rows, now);
+    if (controller.cron === STORM_CRON) await runStorm(env, rows, now);
+  }
+  return { ok: true, subscriptions: rows.length };
 }

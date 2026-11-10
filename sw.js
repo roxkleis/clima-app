@@ -1,5 +1,5 @@
-const CACHE = "clima-consenso-v8";
-const ASSETS = ["./icons/icon.svg","./","./index.html","./styles.css?v=5","./observation-ui.css?v=1","./app.js?v=16","./observation-ui.js?v=1","./manifest.json?v=2"];
+const CACHE = "clima-consenso-v9";
+const ASSETS = ["./icons/icon.svg","./","./index.html","./styles.css?v=5","./observation-ui.css?v=1","./app.js?v=17","./observation-ui.js?v=1","./manifest.json?v=2"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
@@ -17,10 +17,7 @@ self.addEventListener("activate", event => {
 
 self.addEventListener("fetch", event => {
   const url = new URL(event.request.url);
-  if (
-    url.hostname === "api.open-meteo.com" ||
-    url.hostname === "clima-consenso-smn.roxkleis.workers.dev"
-  ) return;
+  if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
 
   event.respondWith(
     fetch(event.request)
@@ -74,17 +71,16 @@ self.addEventListener("push", event => {
 
 self.addEventListener("notificationclick", event => {
   event.notification.close();
-  const url = event.notification.data?.url || "./";
+  const url = new URL(event.notification.data?.url || "./", self.registration.scope);
+  if (url.origin === "https://www.smn.gob.ar" || url.origin === "https://ws2.smn.gob.ar") {
+    event.waitUntil(clients.openWindow(url.href));
+    return;
+  }
+  if (url.origin !== self.location.origin) return;
   event.waitUntil(
     clients.matchAll({type:"window", includeUncontrolled:true}).then(list => {
-      for(const client of list){
-        if("focus" in client){
-          client.focus();
-          if("navigate" in client) client.navigate(url);
-          return;
-        }
-      }
-      if(clients.openWindow) return clients.openWindow(url);
+      const client = list.find(window => window.url.startsWith(self.registration.scope));
+      return client ? client.focus() : clients.openWindow(url.href);
     })
   );
 });

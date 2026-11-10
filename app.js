@@ -606,7 +606,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=15').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=17').catch(err => console.warn('SW:', err));
   });
 }
 
@@ -642,7 +642,8 @@ const notificationEls = {
   options: document.getElementById('notificationOptions'),
   smn: document.getElementById('alertsSmn'),
   storm: document.getElementById('alertsStorm'),
-  daily: document.getElementById('dailySummary')
+  daily: document.getElementById('dailySummary'),
+  night: document.getElementById('nightSummary')
 };
 const PUSH_API = 'https://clima-consenso-smn.roxkleis.workers.dev';
 
@@ -666,9 +667,6 @@ async function getPushSubscription(){
   });
   if(!config.publicKey) throw new Error('Falta la clave pública VAPID.');
 
-  const permission=await Notification.requestPermission();
-  if(permission!=='granted') throw new Error('Permiso de notificaciones no concedido.');
-
   subscription=await registration.pushManager.subscribe({
     userVisibleOnly:true,
     applicationServerKey: urlBase64ToUint8Array(config.publicKey)
@@ -684,85 +682,107 @@ function urlBase64ToUint8Array(base64String){
   return output;
 }
 
-async function savePushSubscription(){
-  const subscription=await getPushSubscription();
-  const json=subscription.toJSON();
-  const position=await getBestPosition().catch(()=>null);
-  const payload={
-    endpoint:json.endpoint,
-    keys:json.keys,
-    lat:position?.coords?.latitude ?? null,
-    lon:position?.coords?.longitude ?? null,
-    alerts_smn:notificationEls.smn.checked,
-    alerts_storm:notificationEls.storm.checked,
-    daily_summary:notificationEls.daily.checked,
-    timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Argentina/Buenos_Aires'
-  };
-  const r=await fetch(PUSH_API+'/push/subscribe',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(payload)
+async function pushRequest(path, payload) {
+  const response = await fetch(PUSH_API + "/push/" + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
   });
-  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).error || 'No se pudo registrar el dispositivo.');
-  return subscription;
+  if (!response.ok) throw new Error("No se pudieron guardar o consultar tus avisos.");
+  return response.json();
 }
 
-async function updatePushPreferences(){
-  const subscription=await navigator.serviceWorker.ready.then(r=>r.pushManager.getSubscription());
-  if(!subscription) return;
-  const json=subscription.toJSON();
-  const position=await getBestPosition().catch(()=>null);
-  await fetch(PUSH_API+'/push/subscribe',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({
-      endpoint:json.endpoint,
-      keys:json.keys,
-      lat:position?.coords?.latitude ?? null,
-      lon:position?.coords?.longitude ?? null,
-      alerts_smn:notificationEls.smn.checked,
-      alerts_storm:notificationEls.storm.checked,
-      daily_summary:notificationEls.daily.checked,
-      timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Argentina/Buenos_Aires'
-    })
-  });
+const preferenceInputs = {
+  alerts_smn: notificationEls.smn,
+  alerts_storm: notificationEls.storm,
+  daily_summary: notificationEls.daily,
+  night_minimum: notificationEls.night
+};
+let activeSubscription;
+let savedPreferences;
+
+function displayPreferences(preferences) {
+  for (const [key, input] of Object.entries(preferenceInputs)) input.checked = Boolean(preferences[key]);
 }
 
-async function initNotifications(){
-  if(!notificationEls.button) return;
-  if(!('Notification' in window) || !('PushManager' in window)){
-    notificationSetStatus('Este navegador no admite notificaciones push.',false);
-    notificationEls.button.disabled=true;
+async function savePushSubscription(subscription, position = null) {
+  const preferences = Object.fromEntries(Object.entries(preferenceInputs).map(([key, input]) => [key, input.checked]));
+  await pushRequest("subscribe", {
+    ...subscription.toJSON(),
+    lat: position?.coords?.latitude ?? null,
+    lon: position?.coords?.longitude ?? null,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    ...preferences
+  });
+  savedPreferences = preferences;
+}
+
+function showActiveSubscription(subscription) {
+  activeSubscription = subscription;
+  notificationSetStatus("Avisos activos en este dispositivo · hora argentina.", true);
+  notificationEls.options.classList.remove("hidden");
+  notificationEls.button.textContent = "🔔 Actualizar registro";
+}
+
+async function initNotifications() {
+  if (!notificationEls.button) return;
+  if (!("Notification" in window) || !("PushManager" in window)) {
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    notificationSetStatus(ios
+      ? "En iPhone o iPad, agregá la app a la pantalla de inicio y abrila desde ahí."
+      : "Este navegador no admite notificaciones push.");
+    notificationEls.button.disabled = true;
     return;
   }
-  const permission=Notification.permission;
-  const registration=await navigator.serviceWorker.ready;
-  const subscription=await registration.pushManager.getSubscription();
-  if(permission==='granted' && subscription){
-    notificationSetStatus('Alertas activadas en este dispositivo.',true);
-    notificationEls.options.classList.remove('hidden');
-    notificationEls.button.textContent='🔔 Alertas activadas';
-  }else if(permission==='denied'){
-    notificationSetStatus('Las notificaciones están bloqueadas para este sitio. Habilitalas desde los permisos del navegador.',false);
+  if (Notification.permission === "denied") {
+    notificationSetStatus("Las notificaciones están bloqueadas. Habilitalas desde los permisos del navegador.");
+    return;
   }
+  if (Notification.permission !== "granted") return;
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) return;
+  const { preferences } = await pushRequest("preferences", subscription.toJSON());
+  if (!preferences) return;
+  savedPreferences = preferences;
+  displayPreferences(preferences);
+  showActiveSubscription(subscription);
 }
 
-notificationEls.button?.addEventListener('click',async()=>{
-  notificationEls.button.disabled=true;
-  try{
-    await savePushSubscription();
-    notificationSetStatus('Alertas activadas en este dispositivo.',true);
-    notificationEls.options.classList.remove('hidden');
-    notificationEls.button.textContent='🔔 Alertas activadas';
-  }catch(error){
-    notificationSetStatus(error?.message || 'No se pudieron activar las notificaciones.',false);
-  }finally{
-    notificationEls.button.disabled=false;
+notificationEls.button?.addEventListener("click", async () => {
+  notificationEls.button.disabled = true;
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") throw new Error("Permiso de notificaciones no concedido.");
+    const subscription = await getPushSubscription();
+    const position = notificationEls.storm.checked ? await getBestPosition().catch(() => null) : null;
+    await savePushSubscription(subscription, position);
+    showActiveSubscription(subscription);
+  } catch (error) {
+    notificationSetStatus(error.message, Boolean(activeSubscription));
+  } finally {
+    notificationEls.button.disabled = false;
   }
 });
 
-[notificationEls.smn,notificationEls.storm,notificationEls.daily].forEach(input=>{
-  input?.addEventListener('change',()=>updatePushPreferences().catch(console.warn));
-});
+for (const input of Object.values(preferenceInputs)) {
+  input?.addEventListener("change", async () => {
+    if (!activeSubscription) return;
+    notificationEls.button.disabled = true;
+    for (const option of Object.values(preferenceInputs)) option.disabled = true;
+    try {
+      const position = input === notificationEls.storm && input.checked ? await getBestPosition().catch(() => null) : null;
+      await savePushSubscription(activeSubscription, position);
+      showActiveSubscription(activeSubscription);
+    } catch (error) {
+      displayPreferences(savedPreferences);
+      notificationSetStatus(error.message, true);
+    } finally {
+      for (const option of Object.values(preferenceInputs)) option.disabled = false;
+      notificationEls.button.disabled = false;
+    }
+  });
+}
 
-initNotifications().catch(console.warn);
+initNotifications().catch(error => notificationSetStatus(error.message));

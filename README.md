@@ -24,4 +24,10 @@ La documentación actual de Open-Meteo indica que el endpoint ECMWF expone IFS H
 4. Integrar SMN/WRF.
 5. Implementar motor de consenso.
 6. Agregar detalle por modelo.
-7. Agregar alertas y notificaciones.
+## Avisos meteorológicos
+
+Activá los avisos en la PWA y elegí cuáles recibir. Los resúmenes usan el pronóstico de Open-Meteo para San Miguel y se programan a las 05:00 y 20:00 de Argentina. El segundo resume las temperaturas previstas entre las 00:00 y las 05:00 de la madrugada siguiente.
+
+El Worker consulta el canal CAP del SMN cada cinco minutos. Cruza sus polígonos con los límites de CABA y los 31 partidos del GBA según el INDEC. Destaca las alertas que incluyen el partido de San Miguel o se acercan a unos 10 km de su centro. Cartografía de IGN y API Georef.
+
+Para actualizar una base D1 anterior que todavía no tenga la preferencia nocturna, ejecutar una sola vez `ALTER TABLE push_subscriptions ADD COLUMN night_minimum INTEGER NOT NULL DEFAULT 1` antes de desplegar.

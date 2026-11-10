@@ -1,4 +1,5 @@
 import { runNotificationEngine } from "./alerts.js";
+import { pushEndpoint } from "./push.js";
 
 const HEADER_BYTES_PER_VALUE = 2;
 const VARIABLES = ["temperature", "humidity", "precipitation", "windSpeed", "windDirection"];
@@ -568,27 +569,58 @@ async function getNearestSMNObservation(lat, lon) {
   throw new Error("No hay observaciones SMN recientes disponibles");
 }
 
-async function pushSubscribe(request,env){
-  const origin=request.headers.get("Origin");
-  if(origin && origin!=="https://roxkleis.github.io"){
-    return new Response(JSON.stringify({ok:false,error:"Origin not allowed"}),{status:403,headers:{"Content-Type":"application/json",...corsHeaders(request)}});
-  }
-  let b;
-  try{b=await request.json();}
-  catch{return new Response(JSON.stringify({ok:false,error:"Invalid JSON"}),{status:400,headers:{"Content-Type":"application/json",...corsHeaders(request)}});}
-  const endpoint=String(b?.endpoint||""),p256dh=String(b?.keys?.p256dh||""),auth=String(b?.keys?.auth||"");
-  const lat=Number(b?.lat),lon=Number(b?.lon);
-  const timezone=String(b?.timezone||"America/Argentina/Buenos_Aires");
-  if(!endpoint.startsWith("https://")||!p256dh||!auth||!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lon)||lon<-180||lon>180){
-    return new Response(JSON.stringify({ok:false,error:"Invalid subscription"}),{status:400,headers:{"Content-Type":"application/json",...corsHeaders(request)}});
-  }
-  await env.DB.prepare("INSERT INTO push_subscriptions(endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,last_seen_at) VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh,auth=excluded.auth,lat=excluded.lat,lon=excluded.lon,alerts_smn=excluded.alerts_smn,alerts_storm=excluded.alerts_storm,daily_summary=excluded.daily_summary,last_seen_at=CURRENT_TIMESTAMP")
-    .bind(endpoint,p256dh,auth,lat,lon,b?.alerts_smn===false?0:1,b?.alerts_storm===false?0:1,b?.daily_summary===false?0:1).run();
-  try{
-    await env.DB.prepare("UPDATE push_subscriptions SET timezone=? WHERE endpoint=?").bind(timezone.slice(0,64),endpoint).run();
-  }catch(_){}
-  return new Response(JSON.stringify({ok:true}),{headers:{"Content-Type":"application/json",...corsHeaders(request)}});
+function pushResponse(request, data, status = 200) {
+  return Response.json(data, { status, headers: { ...corsHeaders(request), "Cache-Control": "no-store" } });
 }
+
+async function pushSettings(request, env, readOnly) {
+  const origin = request.headers.get("Origin");
+  if (origin && origin !== "https://roxkleis.github.io") {
+    return pushResponse(request, { ok: false, error: "Origin not allowed" }, 403);
+  }
+  let input;
+  try {
+    input = await request.json();
+  } catch {
+    return pushResponse(request, { ok: false, error: "Invalid JSON" }, 400);
+  }
+  const endpoint = String(input?.endpoint ?? "");
+  const auth = String(input?.keys?.auth ?? "");
+  if (!pushEndpoint(endpoint) || !/^[\w-]{22}$/.test(auth)) {
+    return pushResponse(request, { ok: false, error: "Invalid subscription" }, 400);
+  }
+  if (readOnly) {
+    const preferences = await env.DB.prepare(
+      "SELECT alerts_smn, alerts_storm, daily_summary, night_minimum FROM push_subscriptions WHERE endpoint = ? AND auth = ?"
+    ).bind(endpoint, auth).first();
+    return pushResponse(request, { ok: true, preferences: preferences ?? null });
+  }
+
+  const p256dh = String(input?.keys?.p256dh ?? "");
+  const lat = input.lat == null ? null : Number(input.lat);
+  const lon = input.lon == null ? null : Number(input.lon);
+  const timezone = String(input.timezone || "America/Argentina/Buenos_Aires").slice(0, 64);
+  if (!/^[\w-]{87}$/.test(p256dh) || (lat !== null && (!Number.isFinite(lat) || Math.abs(lat) > 90)) ||
+      (lon !== null && (!Number.isFinite(lon) || Math.abs(lon) > 180))) {
+    return pushResponse(request, { ok: false, error: "Invalid subscription" }, 400);
+  }
+  const night = typeof input.night_minimum === "boolean" ? Number(input.night_minimum) : null;
+  const result = await env.DB.prepare(`INSERT INTO push_subscriptions
+    (endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,night_minimum,timezone,last_seen_at)
+    VALUES (?,?,?,?,?,?,?,?,COALESCE(?,1),?,CURRENT_TIMESTAMP)
+    ON CONFLICT(endpoint) DO UPDATE SET
+      p256dh=excluded.p256dh,auth=excluded.auth,
+      lat=COALESCE(excluded.lat,push_subscriptions.lat),lon=COALESCE(excluded.lon,push_subscriptions.lon),
+      alerts_smn=excluded.alerts_smn,alerts_storm=excluded.alerts_storm,daily_summary=excluded.daily_summary,
+      night_minimum=COALESCE(?,push_subscriptions.night_minimum),timezone=excluded.timezone,last_seen_at=CURRENT_TIMESTAMP
+    WHERE push_subscriptions.auth=excluded.auth`)
+    .bind(endpoint, p256dh, auth, lat, lon, Number(input.alerts_smn !== false), Number(input.alerts_storm !== false),
+      Number(input.daily_summary !== false), night, timezone, night).run();
+  return result.meta.changes
+    ? pushResponse(request, { ok: true })
+    : pushResponse(request, { ok: false, error: "Invalid subscription credentials" }, 403);
+}
+
 async function pushUnsubscribe(request,env){
   const origin=request.headers.get("Origin");
   if(origin && origin!=="https://roxkleis.github.io"){
@@ -632,7 +664,8 @@ export default {
           headers: { ...headers, "Content-Type": "application/json; charset=utf-8" },
         });
       }
-      if (url.pathname === "/push/subscribe" && request.method === "POST") return await pushSubscribe(request,env);
+      if (url.pathname === "/push/subscribe" && request.method === "POST") return await pushSettings(request, env, false);
+      if (url.pathname === "/push/preferences" && request.method === "POST") return await pushSettings(request, env, true);
       if (url.pathname === "/push/unsubscribe" && request.method === "POST") return await pushUnsubscribe(request,env);
 
       const lat = Number(url.searchParams.get("lat"));
@@ -725,11 +758,12 @@ export default {
   },
   async scheduled(controller, env) {
     try {
-      const result = await runNotificationEngine(env);
+      const result = await runNotificationEngine(env, controller);
       console.log("notification-engine", controller.cron, JSON.stringify(result));
     } catch (error) {
-      console.log("notification-engine-error", error?.message || String(error));
+      console.error("notification-engine-error", controller.cron, error?.message || String(error));
       controller.noRetry();
+      throw error;
     }
   },
 };

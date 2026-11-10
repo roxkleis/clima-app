@@ -18,4 +18,4 @@ VAPID_PUBLIC_KEY = "BIJUCD53Bb8gvKSOP6zL5NrWmn9JtCaR_WQlHaaRkWNWWj_kpo89ENLdx5Be
 
 
 [triggers]
-crons = [ "*/15 * * * *" ]
+crons = ["*/5 * * * *", "0,5,10 8,23 * * *", "1,16,31,46 * * * *"]

@@ -91,15 +91,16 @@
       <div>
         <div class="eyebrow">NOTIFICACIONES</div>
         <h2>Alertas meteorológicas</h2>
-        <p id="notificationStatus">Recibí alertas importantes del SMN y eventos meteorológicos.</p>
+        <p id="notificationStatus">Recibí los pronósticos de San Miguel y las alertas del SMN para CABA y GBA.</p>
       </div>
       <span id="notificationState" class="notification-state">OFF</span>
     </div>
-    <button id="enableNotifications" class="notification-button" type="button">🔔 Activar alertas</button>
+    <button id="enableNotifications" class="notification-button" type="button">🔔 Activar avisos</button>
     <div id="notificationOptions" class="notification-options hidden">
-      <label><input id="alertsSmn" type="checkbox" checked> Alertas oficiales SMN</label>
+      <label><input id="alertsSmn" type="checkbox" checked> Alertas oficiales SMN · CABA y GBA</label>
       <label><input id="alertsStorm" type="checkbox" checked> Tormentas importantes</label>
-      <label><input id="dailySummary" type="checkbox" checked> Resumen diario</label>
+      <label><input id="dailySummary" type="checkbox" checked> 05:00 · Resumen del día en San Miguel</label>
+      <label><input id="nightSummary" type="checkbox" checked> 20:00 · Temperaturas de madrugada en San Miguel</label>
     </div>
   </section>
 
@@ -107,7 +108,7 @@
   <button id="retry" class="primary" type="button">Actualizar clima</button>
   <section id="message" class="message" role="status">Obteniendo ubicación…</section>
 </main>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 <script src="observation-ui.js?v=1"></script>
 </body>
 </html>
