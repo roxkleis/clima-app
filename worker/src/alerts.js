@@ -220,7 +220,7 @@ async function runStorm(env, rows, now) {
 async function runSmnAlerts(env, rows, now) {
   const recipients = rows.filter(row => row.alerts_smn);
   if (!recipients.length) return;
-  const alerts = await fetchRegionalAlerts(now);
+  const alerts = await fetchRegionalAlerts(env.DB, now);
   // 1 índice + hasta 32 XML + hasta 16 envíos = 49 subconsultas externas.
   const budget = { remaining: 16 };
   for (const alert of alerts) {
