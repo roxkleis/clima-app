@@ -221,7 +221,7 @@ async function runSmnAlerts(env, rows, now) {
   const recipients = rows.filter(row => row.alerts_smn);
   if (!recipients.length) return;
   const alerts = await fetchRegionalAlerts(env.DB, now);
-  // Hasta 25 consultas directas, 9 a la réplica y 16 envíos.
+  // Hasta 17 consultas directas, 17 a la réplica y 16 envíos.
   const budget = { remaining: 16 };
   for (const alert of alerts) {
     const payload = alertPayload(alert, now);

@@ -2,7 +2,7 @@ import { matchedZones } from "./alert-zones.js";
 
 const CAP_INDEX = "https://ssl.smn.gob.ar/CAP/AR.php";
 const CAP_URL = /https:\/\/(?:ssl\.smn\.gob\.ar\/feeds\/CAP\/(?:xml_generados|cap_salida)|forms\.smn\.gob\.ar\/feeds\/CAP\/oladecalor)\/[\w-]+\.xml\b/g;
-const DOCUMENTS_PER_POLL = 24;
+const DOCUMENTS_PER_POLL = 16;
 const FALLBACK_BASE = "https://alerts.kde.org";
 const FALLBACK_AREA = FALLBACK_BASE + "/alert/area?min_lat=-35.5&max_lat=-33.7&min_lon=-59.6&max_lon=-57.5";
 const COLORS = { Moderate: "amarilla", Severe: "naranja", Extreme: "roja" };
@@ -75,9 +75,7 @@ async function readCapCache(db, links) {
   return cached;
 }
 
-async function cacheCapDocument(db, url, response, now) {
-  if (!response.ok) throw new Error(`CAP HTTP ${response.status}`);
-  const xml = await response.text();
+async function cacheCapDocument(db, url, xml, now) {
   const isSmn = !url.startsWith(FALLBACK_BASE) ||
     (field(xml, "sender") === "smn@smn.gob.ar" && field(xml, "identifier").startsWith("urn:oid:2.49.0.1.32.0."));
   const regional = isSmn ? parseRegionalAlerts(xml, Number(now))
@@ -96,9 +94,20 @@ async function readFallbackAlerts(db, now) {
   const cached = await readCapCache(db, links);
   for (const url of links.filter(url => !cached.has(url)).slice(0, 8)) {
     try {
-      const document = await fetch(url, { signal: AbortSignal.timeout(4000), redirect: "manual" });
+      const options = { signal: AbortSignal.timeout(8000), redirect: "manual" };
+      let document = await fetch(url, options);
+      if (document.status === 301) {
+        const location = document.headers.get("Location");
+        const target = location && URL.parse(location, FALLBACK_BASE);
+        if (!target || target.origin !== FALLBACK_BASE || !/^\/cap\/alerts\/ar-smn-es\/[^/]+\.xml$/.test(target.pathname)) {
+          cached.set(url, await cacheCapDocument(db, url, "", now));
+          continue;
+        }
+        document = await fetch(target, options);
+      }
       if (document.status === 429) break;
-      cached.set(url, await cacheCapDocument(db, url, document, now));
+      if (!document.ok) throw new Error(`CAP HTTP ${document.status}`);
+      cached.set(url, await cacheCapDocument(db, url, await document.text(), now));
     } catch (error) {
       console.warn("smn-cap-fallback-document", error?.message);
     }
@@ -130,7 +139,8 @@ async function readDirectAlerts(db, now) {
         fallback = true;
         break;
       }
-      cached.set(url, await cacheCapDocument(db, url, document, now));
+      if (!document.ok) throw new Error(`CAP HTTP ${document.status}`);
+      cached.set(url, await cacheCapDocument(db, url, await document.text(), now));
     } catch (error) {
       console.warn("smn-cap-document", error?.message);
     }
