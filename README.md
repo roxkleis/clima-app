@@ -30,4 +30,6 @@ Activá los avisos en la PWA y elegí cuáles recibir. Los resúmenes usan el pr
 
 El Worker consulta el canal CAP del SMN cada cinco minutos. Cruza sus polígonos con los límites de CABA y los 31 partidos del GBA según el INDEC. Destaca las alertas que incluyen el partido de San Miguel o se acercan a unos 10 km de su centro. Cartografía de IGN y API Georef.
 
+Si el canal del SMN limita las descargas, el Worker consulta los avisos CAP del mismo emisor publicados por el FOSS Public Alert Server de KDE. [Canal oficial del SMN](https://ssl.smn.gob.ar/CAP/AR.php) · [Fuentes de KDE](https://alerts.kde.org/sources/status)
+
 Para actualizar una base D1 anterior que todavía no tenga la preferencia nocturna, ejecutar una sola vez `ALTER TABLE push_subscriptions ADD COLUMN night_minimum INTEGER NOT NULL DEFAULT 1` antes de desplegar.
