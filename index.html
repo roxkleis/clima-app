@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#071827">
   <meta name="description" content="Clima Consenso - SMN, ECMWF, GFS e ICON">
   <link rel="manifest" href="manifest.json?v=2">
-  <link rel="stylesheet" href="styles.css?v=5">
+  <link rel="stylesheet" href="styles.css?v=6">
   <link rel="stylesheet" href="observation-ui.css?v=1">
   <title>Clima by richardspulgar</title>
 </head>
@@ -18,17 +18,39 @@
       <div class="eyebrow">Clima by richardspulgar</div>
       <h1 id="location">Buscando ubicación…</h1>
       <div class="updated" id="updated">Esperando datos…</div>
+      <button id="changeLocation" class="location-button" type="button">Cambiar ubicación</button>
     </div>
     <div class="status" id="status">GPS</div>
   </header>
+
+  <dialog id="locationDialog" class="location-dialog" aria-labelledby="locationTitle">
+    <form id="locationSearch">
+      <h2 id="locationTitle">Elegí una ubicación</h2>
+      <label for="cityQuery">Ciudad</label>
+      <div class="location-search">
+        <input id="cityQuery" type="search" placeholder="Ej. San Miguel, Buenos Aires" required minlength="2" maxlength="100" autofocus>
+        <button type="submit">Buscar</button>
+      </div>
+      <p id="locationFeedback" role="status"></p>
+      <ul id="locationResults"></ul>
+      <div class="location-actions">
+        <button id="useAutomaticLocation" type="button">Detectar automáticamente</button>
+        <button id="closeLocation" type="button">Cerrar</button>
+      </div>
+    </form>
+  </dialog>
 
   <section class="hero card">
     <div class="weather-icon" id="weatherIcon">🌤️</div>
     <div class="hero-main">
       <div class="condition" id="condition">Cargando consenso…</div>
+      <dl class="hero-range" aria-label="Temperaturas pronosticadas para hoy">
+        <div><dt>Máx.</dt><dd id="todayMax">—</dd></div>
+        <div><dt>Mín.</dt><dd id="todayMin">—</dd></div>
+      </dl>
       <div class="temperature"><span id="temperature">—</span><sup>°</sup></div>
       <div class="feels">Sensación térmica <strong id="apparent">—</strong>°</div>
-    <div class="observation" id="observation">Buscando observación SMN…</div>
+      <div class="observation" id="observation">Buscando observación SMN…</div>
     </div>
   </section>
 
@@ -91,7 +113,7 @@
       <div>
         <div class="eyebrow">NOTIFICACIONES</div>
         <h2>Alertas meteorológicas</h2>
-        <p id="notificationStatus">Recibí los pronósticos de San Miguel y las alertas del SMN para CABA y GBA.</p>
+        <p id="notificationStatus" aria-live="polite">Recibí los pronósticos de San Miguel y las alertas del SMN para CABA y GBA.</p>
       </div>
       <span id="notificationState" class="notification-state">OFF</span>
     </div>
@@ -101,6 +123,7 @@
       <label><input id="alertsStorm" type="checkbox" checked> Tormentas importantes</label>
       <label><input id="dailySummary" type="checkbox" checked> 05:00 · Resumen del día en San Miguel</label>
       <label><input id="nightSummary" type="checkbox" checked> 20:00 · Temperaturas de madrugada en San Miguel</label>
+      <button id="testNotification" class="notification-button" type="button">Enviar aviso de prueba</button>
     </div>
   </section>
 
@@ -108,7 +131,7 @@
   <button id="retry" class="primary" type="button">Actualizar clima</button>
   <section id="message" class="message" role="status">Obteniendo ubicación…</section>
 </main>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 <script src="observation-ui.js?v=1"></script>
 </body>
 </html>

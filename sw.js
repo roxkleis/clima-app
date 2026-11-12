@@ -1,5 +1,5 @@
-const CACHE = "clima-consenso-v9";
-const ASSETS = ["./icons/icon.svg","./","./index.html","./styles.css?v=5","./observation-ui.css?v=1","./app.js?v=17","./observation-ui.js?v=1","./manifest.json?v=2"];
+const CACHE = "clima-consenso-v10";
+const ASSETS = ["./icons/icon.svg","./","./index.html","./styles.css?v=6","./observation-ui.css?v=1","./app.js?v=18","./observation-ui.js?v=1","./manifest.json?v=2"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));

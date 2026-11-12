@@ -1,5 +1,5 @@
 import { runNotificationEngine } from "./alerts.js";
-import { pushEndpoint } from "./push.js";
+import { pushEndpoint, sendPush } from "./push.js";
 
 const HEADER_BYTES_PER_VALUE = 2;
 const VARIABLES = ["temperature", "humidity", "precipitation", "windSpeed", "windDirection"];
@@ -51,7 +51,7 @@ function lccProject(lat, lon, p) {
 
 function nearestIndex(value, origin, step, count) {
   const idx = Math.round((value - origin) / step);
-  return Math.max(0, Math.min(count - 1, idx));
+  return Number.isInteger(idx) && idx >= 0 && idx < count ? idx : null;
 }
 
 function decodeInt16(buffer, byteOffset) {
@@ -633,6 +633,41 @@ async function pushUnsubscribe(request,env){
   return new Response(JSON.stringify({ok:true}),{headers:{"Content-Type":"application/json",...corsHeaders(request)}});
 }
 
+async function pushTest(request, env) {
+  if (request.headers.get("Origin") !== "https://roxkleis.github.io") {
+    return pushResponse(request, { ok: false, error: "Origen no autorizado." }, 403);
+  }
+  const input = await request.json().catch(() => null);
+  const endpoint = input?.endpoint;
+  const auth = input?.keys?.auth;
+  if (typeof endpoint !== "string" || !pushEndpoint(endpoint) || typeof auth !== "string" || !/^[\w-]{22}$/.test(auth)) {
+    return pushResponse(request, { ok: false, error: "Registro de notificaciones inválido." }, 400);
+  }
+  const subscription = await env.DB.prepare("SELECT p256dh FROM push_subscriptions WHERE endpoint = ? AND auth = ?")
+    .bind(endpoint, auth).first();
+  if (!subscription) {
+    return pushResponse(request, { ok: false, error: "Actualizá el registro de este dispositivo antes de probar." }, 404);
+  }
+  const attempt = await env.DB.prepare(`INSERT INTO notification_deliveries(event_key, endpoint)
+    VALUES ('test', ?) ON CONFLICT(event_key, endpoint) DO UPDATE SET sent_at=CURRENT_TIMESTAMP
+    WHERE sent_at <= datetime('now', '-1 minute')`).bind(endpoint).run();
+  if (!attempt.meta.changes) {
+    return pushResponse(request, { ok: false, error: "Esperá un minuto antes de volver a probar." }, 429);
+  }
+  const result = await sendPush({ endpoint, keys: { auth, p256dh: subscription.p256dh } }, {
+    title: "Clima · Prueba de notificación",
+    body: "Los avisos de Clima pueden llegar aunque la app esté cerrada.",
+    tag: "clima-prueba", url: "./", ttl: 60
+  }, env);
+  if (result.gone) {
+    return pushResponse(request, { ok: false, error: "El registro venció. Volvé a activar los avisos." }, 410);
+  }
+  if (!result.ok) {
+    return pushResponse(request, { ok: false, error: "El servicio de notificaciones rechazó la prueba." }, 502);
+  }
+  return pushResponse(request, { ok: true });
+}
+
 export default {
   async fetch(request, env) {
     const headers = corsHeaders(request);
@@ -666,6 +701,7 @@ export default {
       }
       if (url.pathname === "/push/subscribe" && request.method === "POST") return await pushSettings(request, env, false);
       if (url.pathname === "/push/preferences" && request.method === "POST") return await pushSettings(request, env, true);
+      if (url.pathname === "/push/test" && request.method === "POST") return await pushTest(request, env);
       if (url.pathname === "/push/unsubscribe" && request.method === "POST") return await pushUnsubscribe(request,env);
 
       const lat = Number(url.searchParams.get("lat"));
@@ -693,6 +729,9 @@ export default {
       const projected = lccProject(lat, lon, metadata.projection);
       const xIndex = nearestIndex(projected.x, metadata.x0, metadata.dx, metadata.nx);
       const yIndex = nearestIndex(projected.y, metadata.y0, metadata.dy, metadata.ny);
+      if (xIndex === null || yIndex === null) {
+        return Response.json({ error: "Location outside SMN forecast grid" }, { status: 404, headers });
+      }
       const gridIndex = yIndex * metadata.nx + xIndex;
 
       const now = Date.now();

@@ -64,6 +64,7 @@ async function fetchModel(base,lat,lon,tz){
 
 async function fetchSmnForecast(baseUrl,lat,lon,hours=6){
   const r=await fetch(`${baseUrl}/forecast?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&hours=${hours}`,{cache:"no-store"});
+  if(r.status===404) return null;
   if(!r.ok) throw new Error("SMN forecast HTTP "+r.status);
   return await r.json();
 }

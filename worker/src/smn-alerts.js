@@ -52,7 +52,7 @@ export function parseRegionalAlerts(xml, now) {
 }
 
 export async function fetchRegionalAlerts(now) {
-  const response = await fetch(CAP_INDEX, { signal: AbortSignal.timeout(12000), redirect: "error" });
+  const response = await fetch(CAP_INDEX, { signal: AbortSignal.timeout(12000), redirect: "manual" });
   if (!response.ok) throw new Error(`Índice SMN HTTP ${response.status}`);
   const links = [...new Set((await response.text()).match(CAP_URL) ?? [])];
   const offset = Math.floor(Number(now) / 300000) * DOCUMENTS_PER_POLL % (links.length || 1);
@@ -62,7 +62,7 @@ export async function fetchRegionalAlerts(now) {
   const alerts = new Map();
   for (let i = 0; i < documents.length; i += 6) {
     const results = await Promise.allSettled(documents.slice(i, i + 6).map(async url => {
-      const document = await fetch(url, { signal: AbortSignal.timeout(8000), redirect: "error" });
+      const document = await fetch(url, { signal: AbortSignal.timeout(8000), redirect: "manual" });
       if (!document.ok) throw new Error(`CAP HTTP ${document.status}`);
       return parseRegionalAlerts(await document.text(), Number(now));
     }));

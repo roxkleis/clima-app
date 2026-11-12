@@ -48,7 +48,7 @@ export async function sendPush(subscription,payload,env){
   if (!endpoint) throw new Error("Proveedor Web Push no admitido");
   const jwt=await vapidJwt(endpoint.protocol+"//"+endpoint.host,env.VAPID_SUBJECT,env.VAPID_PUBLIC_KEY,env.VAPID_PRIVATE_KEY);
   const body=await encryptPayload(enc.encode(JSON.stringify(payload)),subscription.keys.p256dh,subscription.keys.auth);
-  const r=await fetch(endpoint,{method:"POST",redirect:"error",signal:AbortSignal.timeout(8000),headers:{"Authorization":"vapid t="+jwt+", k="+env.VAPID_PUBLIC_KEY,"Content-Encoding":"aes128gcm","Content-Type":"application/octet-stream","TTL":String(payload.ttl ?? 86400)},body});
+  const r=await fetch(endpoint,{method:"POST",redirect:"manual",signal:AbortSignal.timeout(8000),headers:{"Authorization":"vapid t="+jwt+", k="+env.VAPID_PUBLIC_KEY,"Content-Encoding":"aes128gcm","Content-Type":"application/octet-stream","TTL":String(payload.ttl ?? 86400)},body});
   await r.body?.cancel();
   console.log("web-push",JSON.stringify({status:r.status,ok:r.ok,endpointHost:endpoint.host}));
   return {ok:r.ok,gone:r.status===404||r.status===410,status:r.status};

@@ -10,6 +10,7 @@ const $ = id => document.getElementById(id);
 const els = {
   location:$('location'),updated:$('updated'),status:$('status'),icon:$('weatherIcon'),condition:$('condition'),observation:$('observation'),
   temperature:$('temperature'),apparent:$('apparent'),rain:$('rain'),humidity:$('humidity'),
+  todayMax:$('todayMax'),todayMin:$('todayMin'),
   hourly:$('hourly'),daily:$('daily'),lat:$('lat'),lon:$('lon'),accuracy:$('accuracy'),
   message:$('message'),retry:$('retry'),consensusBadge:$('consensusBadge'),
   consensusTitle:$('consensusTitle'),consensusSub:$('consensusSub'),modelDetails:$('modelDetails'),
@@ -80,6 +81,78 @@ function weatherInfoAtTime(code,date,lat,lon){
 const fmtHour = iso => new Intl.DateTimeFormat('es-AR',{hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
 const fmtDay = iso => new Intl.DateTimeFormat('es-AR',{weekday:'short',day:'2-digit'}).format(new Date(`${iso}T12:00:00`)).replace('.','');
 const setMessage = text => els.message.textContent = text;
+const formatTemperature = temp => Number.isFinite(temp) ? `${Math.round(temp)}°` : '—';
+const LOCAL_WEATHER_ACCURACY = 4000;
+const LOCATION_KEY = 'clima-selected-location';
+
+function readSelectedLocation(){
+  try{
+    const place=JSON.parse(localStorage.getItem(LOCATION_KEY));
+    if(typeof place?.name==='string' && Number.isFinite(place.latitude) && Math.abs(place.latitude)<=90 &&
+       Number.isFinite(place.longitude) && Math.abs(place.longitude)<=180) return place;
+  }catch(_){}
+  return null;
+}
+
+let selectedLocation=readSelectedLocation();
+
+function selectLocation(place){
+  selectedLocation=place;
+  try{
+    if(place) localStorage.setItem(LOCATION_KEY,JSON.stringify(place));
+    else localStorage.removeItem(LOCATION_KEY);
+  }catch(_){}
+  $('locationDialog').close();
+  loadWeather();
+}
+
+let locationSearchId=0;
+$('changeLocation').addEventListener('click',()=>{
+  locationSearchId++;
+  $('locationFeedback').textContent='';
+  $('locationResults').replaceChildren();
+  $('locationDialog').showModal();
+});
+$('closeLocation').addEventListener('click',()=>$('locationDialog').close());
+$('useAutomaticLocation').addEventListener('click',()=>selectLocation(null));
+$('locationSearch').addEventListener('submit',async event=>{
+  event.preventDefault();
+  const searchId=++locationSearchId;
+  const results=$('locationResults');
+  const feedback=$('locationFeedback');
+  const name=$('cityQuery').value.trim();
+  results.replaceChildren();
+  if(name.length<2){
+    feedback.textContent='Ingresá al menos dos caracteres.';
+    return;
+  }
+  feedback.textContent='Buscando ciudades…';
+  try{
+    const query=new URLSearchParams({name,language:'es',count:10});
+    const data=await fetchJsonWithTimeout('https://geocoding-api.open-meteo.com/v1/search?'+query);
+    if(searchId!==locationSearchId || !$('locationDialog').open) return;
+    for(const {name,admin1,admin2,country,latitude,longitude} of data.results ?? []){
+      if(!name || !Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
+      const item=document.createElement('li');
+      const button=document.createElement('button');
+      button.type='button';
+      button.textContent=[...new Set([name,admin2,admin1,country].filter(Boolean))].join(', ');
+      const label=[...new Set([name,admin1,country].filter(Boolean))].join(', ');
+      button.addEventListener('click',()=>selectLocation({name:label,latitude,longitude}));
+      item.appendChild(button);
+      results.appendChild(item);
+    }
+    feedback.textContent=results.childElementCount ? 'Elegí tu ciudad en los resultados.' : 'No encontramos esa ciudad.';
+  }catch(_){
+    if(searchId===locationSearchId && $('locationDialog').open) feedback.textContent='No pudimos buscar ciudades. Intentá de nuevo.';
+  }
+});
+
+async function fetchJsonWithTimeout(url,timeout=10000){
+  const response=await fetch(url,{cache:'no-store',signal:AbortSignal.timeout(timeout)});
+  if(!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
 
 async function reverseGeocode(lat,lon){
   const key=`clima-location-${lat.toFixed(3)}-${lon.toFixed(3)}`;
@@ -89,9 +162,7 @@ async function reverseGeocode(lat,lon){
   }catch(_){}
 
   const url=`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&localityLanguage=es`;
-  const r=await fetch(url,{cache:'no-store'});
-  if(!r.ok) throw new Error(`Reverse geocoding HTTP ${r.status}`);
-  const data=await r.json();
+  const data=await fetchJsonWithTimeout(url);
 
   const locality=data.locality || data.city || data.principalSubdivision || '';
   const province=data.principalSubdivision || '';
@@ -160,7 +231,7 @@ async function fetchNearestSMNObservation(lat,lon){
   const url=`${SMN_OBS_PROXY}?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
   const data=await fetchJsonWithTimeout(url,15000);
   if(!data?.ok || !data.observation) throw new Error(data?.error || 'SMN sin observación');
-  return data.observation;
+  return data.observation.station?.distanceKm <= 50 ? data.observation : null;
 }
 
 function apparentSMN(tempC,rh,windMs){
@@ -353,6 +424,7 @@ function renderMain(items,position,placeName=null,observation=null){
 
   els.location.textContent=placeName || 'Mi ubicación';
   els.updated.textContent=`Actualizado ${new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}`;
+  if(position.coords.accuracy>LOCAL_WEATHER_ACCURACY) els.updated.textContent+=' · Ubicación aproximada';
   els.status.textContent=`${items.length} MODELOS OK`;
   els.icon.textContent=icon;
   els.condition.textContent=condition;
@@ -384,7 +456,7 @@ function renderMain(items,position,placeName=null,observation=null){
   }
   els.lat.textContent=position.coords.latitude.toFixed(6);
   els.lon.textContent=position.coords.longitude.toFixed(6);
-  els.accuracy.textContent=`${Math.round(position.coords.accuracy)} m`;
+  els.accuracy.textContent=position.coords.accuracy==null ? 'Ubicación elegida' : `${Math.round(position.coords.accuracy)} m`;
 
   if(c.split22){
     els.consensusTitle.textContent='Consenso dividido 2/2';
@@ -456,11 +528,14 @@ function renderHourly(items,lat=null,lon=null){
   }
 }
 
-function smnDailyMap(smn){
+function smnDailyMap(smn,timezone){
   const result=new Map();
+  const dateAtLocation=new Intl.DateTimeFormat('sv-SE',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'});
   for(const d of (smn?.data?.data || [])){
-    const day=d.validTime.slice(0,10);
-    const temp=Number(d.temperature);
+    const date=new Date(d.validTime);
+    if(Number.isNaN(date.getTime())) continue;
+    const day=dateAtLocation.format(date);
+    const temp=d.temperature;
     if(!result.has(day)) result.set(day,{temps:[],precips:[],codes:[]});
     const x=result.get(day);
     if(Number.isFinite(temp)) x.temps.push(temp);
@@ -470,23 +545,31 @@ function smnDailyMap(smn){
 }
 
 function renderDaily(items,lat=null,lon=null){
-  const openItems=items.filter(x=>x.key!=='smn');
+  const openItems=items.filter(x=>x.key!=='smn' && x.data.daily?.time?.length);
   const base=openItems[0]?.data.daily;
   const smn=items.find(x=>x.key==='smn');
-  const smnDays=smnDailyMap(smn);
   els.daily.innerHTML='';
+  els.todayMax.textContent='—';
+  els.todayMin.textContent='—';
   if(!base) return;
+  const smnDays=smnDailyMap(smn,openItems[0].data.timezone || 'UTC');
 
   for(let i=0;i<Math.min(7,base.time.length);i++){
     const dayKey=base.time[i];
     const max=[],min=[],codes=[];
     for(const item of openItems){
       const d=item.data.daily;
-      max.push(Number(d.temperature_2m_max[i])); min.push(Number(d.temperature_2m_min[i])); codes.push(Number(d.weather_code[i]));
+      const dayIndex=d.time.indexOf(dayKey);
+      if(dayIndex<0) continue;
+      max.push(d.temperature_2m_max?.[dayIndex]);
+      min.push(d.temperature_2m_min?.[dayIndex]);
+      codes.push(d.weather_code?.[dayIndex]);
     }
 
     const smnDay=smnDays.get(dayKey);
-    if(smnDay?.temps?.length){
+    // Los extremos de hoy necesitan el día completo, no solo las horas restantes del WRF.
+    const hasSmn=smnDay?.temps.length >= (i===0 ? 24 : 1);
+    if(hasSmn){
       max.push(Math.max(...smnDay.temps));
       min.push(Math.min(...smnDay.temps));
     }
@@ -495,21 +578,27 @@ function renderDaily(items,lat=null,lon=null){
     const minConsensus=consensusFor(min.map((temp,i)=>({key:String(i),name:String(i),temp})));
     const consensusMax=maxConsensus.temp;
     const consensusMin=minConsensus.temp;
+    if(i===0){
+      els.todayMax.textContent=formatTemperature(consensusMax);
+      els.todayMin.textContent=formatTemperature(consensusMin);
+    }
     const code=codes.length ? codes[Math.floor(codes.length/2)] : 0;
     // El resumen diario representa principalmente las horas diurnas,
     // por eso conserva la iconografía solar de cada condición.
     const [ico,desc]=weatherInfo(code);
-    const modelCount=openItems.length + (smnDay?.temps?.length ? 1 : 0);
+    const modelCount=openItems.length + Number(hasSmn);
     const el=document.createElement('div');
     el.className='day';
-    el.innerHTML=`<div class="name">${i===0?'Hoy':fmtDay(dayKey)}</div><div class="icon">${ico}</div><div class="desc">${desc} · ${modelCount} mod.</div><div class="max">${Math.round(consensusMax)}°</div><div class="min">${Math.round(consensusMin)}°</div>`;
+    el.innerHTML=`<div class="name">${i===0?'Hoy':fmtDay(dayKey)}</div><div class="icon">${ico}</div><div class="desc">${desc} · ${modelCount} mod.</div><div class="max">${formatTemperature(consensusMax)}</div><div class="min">${formatTemperature(consensusMin)}</div>`;
     els.daily.appendChild(el);
   }
 }
 
 function showGpsError(error){
   els.status.textContent='GPS';
-  setMessage({1:'Permiso de ubicación denegado. Habilitalo para este sitio.',2:'No fue posible determinar tu ubicación.',3:'La solicitud de ubicación tardó demasiado.'}[error.code]||'No se pudo obtener la ubicación.');
+  els.location.textContent='Ubicación sin confirmar';
+  els.updated.textContent='Elegí tu ciudad en Cambiar ubicación.';
+  setMessage({1:'Permiso de ubicación denegado.',2:'No fue posible determinar tu ubicación.',3:'La solicitud de ubicación tardó demasiado.'}[error.code]||'No se pudo obtener la ubicación.');
 }
 
 function getPosition(options){
@@ -523,72 +612,65 @@ function getPosition(options){
 }
 
 async function getBestPosition(){
-  // Android Chrome suele resolver antes la ubicación por red que el GPS puro.
-  // Primero intentamos una ubicación rápida y suficientemente útil para una
-  // grilla meteorológica de 4 km; si falla, hacemos un segundo intento con GPS.
+  let estimate;
   try{
-    return await getPosition({
+    estimate=await getPosition({
       enableHighAccuracy:false,
       timeout:10000,
-      maximumAge:300000
+      maximumAge:0
     });
   }catch(firstError){
     if(firstError?.code===1) throw firstError;
-
-    return await getPosition({
+  }
+  if(estimate?.coords.accuracy<=LOCAL_WEATHER_ACCURACY) return estimate;
+  try{
+    const precise=await getPosition({
       enableHighAccuracy:true,
-      timeout:30000,
-      maximumAge:60000
+      timeout:12000,
+      maximumAge:0
     });
+    return !estimate || precise.coords.accuracy<estimate.coords.accuracy ? precise : estimate;
+  }catch(error){
+    if(estimate) return estimate;
+    throw error;
   }
 }
 
+let weatherRequestId=0;
 async function loadWeather(){
+  const requestId=++weatherRequestId;
+  const place=selectedLocation;
   els.status.textContent='BUSCANDO';
   setMessage('Obteniendo ubicación…');
 
+  let position;
   try{
-    const position=await getBestPosition();
-
-    els.lat.textContent=position.coords.latitude.toFixed(6);
-    els.lon.textContent=position.coords.longitude.toFixed(6);
-    els.accuracy.textContent=`${Math.round(position.coords.accuracy)} m`;
-
-    const lat=position.coords.latitude, lon=position.coords.longitude;
-    let placeName='Mi ubicación';
-    try{
-      const place=await reverseGeocode(lat,lon);
-      placeName=place.name || placeName;
-      els.location.textContent=placeName;
-    }catch(error){
-      console.warn('Reverse geocoding:',error);
-    }
-    setMessage('Ubicación obtenida. Consultando observación SMN y modelos…');
-
-    let observation=null;
-    try{
-      observation=await fetchNearestSMNObservation(lat,lon);
-    }catch(error){
-      console.warn('Observación SMN:',error);
-    }
-
-    const requests=[
-      fetchOpenMeteo('ecmwf',lat,lon),
-      fetchOpenMeteo('gfs',lat,lon),
-      fetchOpenMeteo('icon',lat,lon),
-      fetchSMN(lat,lon)
-    ];
-    const results=await Promise.allSettled(requests);
-    const ok=results.filter(r=>r.status==='fulfilled').map(r=>r.value);
-    if(!ok.length){
-      els.status.textContent='ERROR';
-      setMessage('Ningún modelo respondió. Revisá la conexión e intentá nuevamente.');
-      return;
-    }
-    renderMain(ok,position,placeName,observation);
+    position=place ? {coords:{latitude:place.latitude,longitude:place.longitude,accuracy:null}} : await getBestPosition();
   }catch(error){
-    showGpsError(error);
+    if(requestId===weatherRequestId) showGpsError(error);
+    return;
   }
+  if(requestId!==weatherRequestId) return;
+  const {latitude:lat,longitude:lon}=position.coords;
+  setMessage('Consultando observación SMN y modelos…');
+
+  const [location,observation,results]=await Promise.all([
+    place || reverseGeocode(lat,lon).catch(()=>null),
+    fetchNearestSMNObservation(lat,lon).catch(()=>null),
+    Promise.allSettled([
+      fetchOpenMeteo('ecmwf',lat,lon),fetchOpenMeteo('gfs',lat,lon),
+      fetchOpenMeteo('icon',lat,lon),fetchSMN(lat,lon)
+    ])
+  ]);
+  if(requestId!==weatherRequestId) return;
+  const models=results.filter(result=>result.status==='fulfilled').map(result=>result.value);
+  if(!models.length){
+    els.status.textContent='ERROR';
+    els.updated.textContent='No se pudo actualizar el pronóstico.';
+    setMessage('Ningún modelo respondió. Revisá la conexión e intentá nuevamente.');
+    return;
+  }
+  renderMain(models,position,location?.name,observation);
 }
 
 els.retry.addEventListener('click',loadWeather);
@@ -606,7 +688,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=17').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=18').catch(err => console.warn('SW:', err));
   });
 }
 
@@ -639,6 +721,7 @@ const notificationEls = {
   status: document.getElementById('notificationStatus'),
   state: document.getElementById('notificationState'),
   button: document.getElementById('enableNotifications'),
+  test: document.getElementById('testNotification'),
   options: document.getElementById('notificationOptions'),
   smn: document.getElementById('alertsSmn'),
   storm: document.getElementById('alertsStorm'),
@@ -688,7 +771,10 @@ async function pushRequest(path, payload) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  if (!response.ok) throw new Error("No se pudieron guardar o consultar tus avisos.");
+  if (!response.ok) {
+    const data=path==="test" ? await response.json().catch(()=>null) : null;
+    throw Object.assign(new Error(data?.error || "No se pudieron guardar o consultar tus avisos."), {status:response.status});
+  }
   return response.json();
 }
 
@@ -784,5 +870,24 @@ for (const input of Object.values(preferenceInputs)) {
     }
   });
 }
+
+notificationEls.test?.addEventListener("click", async () => {
+  if (!activeSubscription) return;
+  notificationEls.test.disabled=true;
+  try {
+    await pushRequest("test",activeSubscription.toJSON());
+    notificationSetStatus("Prueba enviada. Revisá las notificaciones de este dispositivo.",true);
+  } catch(error) {
+    if (error.status===410) {
+      await activeSubscription.unsubscribe().catch(()=>{});
+      activeSubscription=null;
+      notificationEls.options.classList.add("hidden");
+      notificationEls.button.textContent="🔔 Activar avisos";
+    }
+    notificationSetStatus(error.message,Boolean(activeSubscription));
+  } finally {
+    notificationEls.test.disabled=false;
+  }
+});
 
 initNotifications().catch(error => notificationSetStatus(error.message));

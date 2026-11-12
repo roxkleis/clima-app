@@ -19,3 +19,15 @@ VAPID_PUBLIC_KEY = "BIJUCD53Bb8gvKSOP6zL5NrWmn9JtCaR_WQlHaaRkWNWWj_kpo89ENLdx5Be
 
 [triggers]
 crons = ["*/5 * * * *", "0,5,10 8,23 * * *", "1,16,31,46 * * * *"]
+
+[observability]
+enabled = true
+redact_query_string = true
+
+[observability.logs]
+enabled = true
+invocation_logs = false
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.01

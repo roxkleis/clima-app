@@ -6,9 +6,28 @@ body{min-height:100vh;background:radial-gradient(circle at 50% -5%,#16466a 0,#08
 .eyebrow{font-size:10px;letter-spacing:1.7px;color:#8fa8ba}
 .topbar h1{font-size:22px;margin:4px 0 0}
 .updated{font-size:11px;color:#7891a3;margin-top:4px}
+.location-button{background:none;border:0;color:#89d7ff;font:inherit;font-size:12px;text-decoration:underline;padding:5px 0;cursor:pointer}
+.location-dialog{width:min(420px,calc(100% - 32px));max-height:calc(100% - 32px);padding:18px;border:1px solid #315c76;border-radius:16px;background:#0a2234;color:#f4f8fb}
+.location-dialog::backdrop{background:rgba(4,17,27,.75)}
+.location-dialog h2{font-size:18px;margin:0 0 14px}
+.location-dialog label,.location-dialog p{font-size:13px;color:#a9bdca}
+.location-dialog p:empty,.location-dialog ul:empty{display:none}
+.location-search,.location-actions{display:flex;gap:8px;margin-top:8px}
+.location-actions{flex-wrap:wrap;justify-content:space-between}
+.location-dialog input,.location-dialog button{padding:8px;border:1px solid #315c76;border-radius:8px;background:#0d2f45;color:inherit;font:inherit;font-size:14px}
+.location-dialog input{flex:1;min-width:0}
+.location-dialog button{cursor:pointer}
+.location-dialog ul{padding:0;list-style:none}
+.location-dialog li + li{margin-top:6px}
+.location-dialog li button{width:100%;text-align:left}
 .status{border:1px solid #315c76;border-radius:999px;padding:7px 10px;font-size:10px;color:#6bd5ff}
 .card{border:1px solid #23485f;border-radius:22px;background:linear-gradient(145deg,rgba(15,47,68,.82),rgba(6,25,39,.88));box-shadow:0 16px 45px rgba(0,0,0,.2)}
 .hero{margin-top:18px;padding:24px 20px;display:flex;align-items:center;gap:18px}
+.hero-main{flex:1;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px;align-items:start}
+.hero-main > :is(.temperature,.feels,.observation){grid-column:1 / -1}
+.hero-range{display:flex;gap:10px;text-align:right;margin:0;font-variant-numeric:tabular-nums}
+.hero-range dt{color:#a9bdca;font-size:11px}
+.hero-range dd{margin:0;font-size:17px;font-weight:750;line-height:1.2}
 .weather-icon{font-size:64px;line-height:1}
 .condition{font-size:14px;color:#a9bdca}
 .temperature{font-size:68px;font-weight:750;line-height:.95;margin:4px 0}
