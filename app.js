@@ -18,16 +18,18 @@ const els = {
 };
 
 const weatherMap = {
-  0:["☀️","Despejado"],1:["🌤️","Principalmente despejado"],2:["⛅","Parcialmente nublado"],3:["☁️","Nublado"],
-  45:["🌫️","Niebla"],48:["🌫️","Niebla"],51:["🌦️","Llovizna ligera"],53:["🌦️","Llovizna"],
-  55:["🌧️","Llovizna intensa"],56:["🌧️","Llovizna helada"],57:["🌧️","Llovizna helada intensa"],
-  61:["🌦️","Lluvia ligera"],63:["🌧️","Lluvia"],65:["🌧️","Lluvia intensa"],66:["🌧️","Lluvia helada"],
-  67:["🌧️","Lluvia helada intensa"],71:["🌨️","Nieve ligera"],73:["🌨️","Nieve"],75:["❄️","Nieve intensa"],
-  77:["🌨️","Granizo de nieve"],80:["🌦️","Chaparrones ligeros"],81:["🌧️","Chaparrones"],
-  82:["⛈️","Chaparrones intensos"],85:["🌨️","Nieve"],86:["❄️","Nieve intensa"],
-  95:["⛈️","Tormenta"],96:["⛈️","Tormenta con granizo"],99:["⛈️","Tormenta fuerte"]
+  0:["sunny","Despejado"],1:["mostly_sunny","Principalmente despejado"],2:["partly_cloudy","Parcialmente nublado"],3:["cloudy","Nublado"],
+  45:["cloudy","Niebla"],48:["cloudy","Niebla"],51:["drizzle","Llovizna ligera"],53:["drizzle","Llovizna"],
+  55:["drizzle","Llovizna intensa"],56:["wintry_mix","Llovizna helada"],57:["wintry_mix","Llovizna helada intensa"],
+  61:["scattered_showers","Lluvia ligera"],63:["showers","Lluvia"],65:["heavy","Lluvia intensa"],66:["wintry_mix","Lluvia helada"],
+  67:["wintry_mix","Lluvia helada intensa"],71:["flurries","Nieve ligera"],73:["snow_showers","Nieve"],75:["heavy_snow","Nieve intensa"],
+  77:["sleet_hail","Granizo de nieve"],80:["scattered_showers","Chaparrones ligeros"],81:["showers","Chaparrones"],
+  82:["heavy","Chaparrones intensos"],85:["scattered_snow","Nieve"],86:["heavy_snow","Nieve intensa"],
+  95:["isolated_tstorms","Tormenta"],96:["strong_tstorms","Tormenta con granizo"],99:["strong_tstorms","Tormenta fuerte"]
 };
-const weatherInfo = code => weatherMap[code] || ["🌤️","Condición variable"];
+const weatherInfo = code => weatherMap[code] || ["partly_cloudy","Condición variable"];
+const nightIcons = { sunny:"clear", mostly_sunny:"mostly_clear", partly_cloudy:"partly_clear" };
+const weatherIconSrc = icon => `./icons/weather/${icon}_dark.svg`;
 
 // Iconografía adaptada al ciclo solar real de la ubicación.
 // De noche, los estados despejados/parcialmente despejados usan luna
@@ -66,16 +68,8 @@ function isNightTime(date,lat,lon){
 }
 
 function weatherInfoAtTime(code,date,lat,lon){
-  const [dayIcon,desc] = weatherInfo(code);
-  if(!isNightTime(date,lat,lon)) return [dayIcon,desc];
-
-  const nightMap = {
-    0:["🌙","Despejado"],
-    1:["🌙","Principalmente despejado"],
-    2:["☁️🌙","Parcialmente nublado"],
-    3:["☁️","Nublado"]
-  };
-  return nightMap[code] || [dayIcon,desc];
+  const [icon,desc] = weatherInfo(code);
+  return [isNightTime(date,lat,lon) ? (nightIcons[icon] || icon) : icon, desc];
 }
 
 const fmtHour = iso => new Intl.DateTimeFormat('es-AR',{hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
@@ -394,20 +388,20 @@ function renderModelDetails(snaps,consensus){
 
 function observationWeatherInfo(observation,lat,lon){
   if(!observation) return null;
-  const cloud=Number(observation.cloudCover);
+  const cloud=observation.cloudCover == null ? NaN : Number(observation.cloudCover);
   const observationDate=new Date(observation.time || Date.now());
   const night=isNightTime(observationDate,lat,lon);
   if(Number.isFinite(cloud)){
-    if(cloud <= 10) return [night ? "🌙" : "☀️","Despejado"];
-    if(cloud <= 50) return [night ? "☁️🌙" : "⛅","Parcialmente nublado"];
-    if(cloud <= 85) return ["☁️","Nublado"];
-    return ["☁️","Cubierto"];
+    if(cloud <= 10) return [night ? "clear" : "sunny","Despejado"];
+    if(cloud <= 50) return [night ? "partly_clear" : "partly_cloudy","Parcialmente nublado"];
+    if(cloud <= 85) return [night ? "mostly_cloudy_night" : "mostly_cloudy","Nublado"];
+    return ["cloudy","Cubierto"];
   }
   const text=String(observation.presentWeather||'').toLowerCase();
-  if(text.includes('thunder') || text.includes('torment')) return ["⛈️","Tormenta"];
-  if(text.includes('rain') || text.includes('lluv')) return ["🌧️","Lluvia"];
-  if(text.includes('drizzle') || text.includes('lloviz')) return ["🌦️","Llovizna"];
-  if(text.includes('fog') || text.includes('niebla')) return ["🌫️","Niebla"];
+  if(text.includes('thunder') || text.includes('torment')) return weatherInfo(95);
+  if(text.includes('rain') || text.includes('lluv')) return weatherInfo(63);
+  if(text.includes('drizzle') || text.includes('lloviz')) return weatherInfo(53);
+  if(text.includes('fog') || text.includes('niebla')) return weatherInfo(45);
   return null;
 }
 
@@ -426,7 +420,7 @@ function renderMain(items,position,placeName=null,observation=null){
   els.updated.textContent=`Actualizado ${new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}`;
   if(position.coords.accuracy>LOCAL_WEATHER_ACCURACY) els.updated.textContent+=' · Ubicación aproximada';
   els.status.textContent=`${items.length} MODELOS OK`;
-  els.icon.textContent=icon;
+  els.icon.src=weatherIconSrc(icon);
   els.condition.textContent=condition;
   // AHORA: observación meteorológica real de la estación SMN más cercana.
   // Si no hay una observación reciente, se conserva el consenso como fallback.
@@ -520,10 +514,10 @@ function renderHourly(items,lat=null,lon=null){
       : (precipVals.length ? median(precipVals) : 0);
     const codeVals=main.filter(x=>Number.isFinite(x.code)).map(x=>x.code);
     const code=codeVals.length ? codeVals[Math.floor(codeVals.length/2)] : 0;
-    const [ico]=weatherInfoAtTime(code,new Date(targetTime),lat,lon);
+    const [ico,desc]=weatherInfoAtTime(code,new Date(targetTime),lat,lon);
     const el=document.createElement('div');
     el.className=`hour ${off===0?'now':''}`;
-    el.innerHTML=`<div class="time">${off===0?'Ahora':fmtHour(targetTime)}</div><div class="icon">${ico}</div><div class="temp">${Math.round(temp)}°</div><div class="rain">💧 ${precip.toFixed(1)} mm</div>`;
+    el.innerHTML=`<div class="time">${off===0?'Ahora':fmtHour(targetTime)}</div><img class="icon" src="${weatherIconSrc(ico)}" alt="${desc}"><div class="temp">${Math.round(temp)}°</div><div class="rain">💧 ${precip.toFixed(1)} mm</div>`;
     els.hourly.appendChild(el);
   }
 }
@@ -589,7 +583,7 @@ function renderDaily(items,lat=null,lon=null){
     const modelCount=openItems.length + Number(hasSmn);
     const el=document.createElement('div');
     el.className='day';
-    el.innerHTML=`<div class="name">${i===0?'Hoy':fmtDay(dayKey)}</div><div class="icon">${ico}</div><div class="desc">${desc} · ${modelCount} mod.</div><div class="max">${formatTemperature(consensusMax)}</div><div class="min">${formatTemperature(consensusMin)}</div>`;
+    el.innerHTML=`<div class="name">${i===0?'Hoy':fmtDay(dayKey)}</div><img class="icon" src="${weatherIconSrc(ico)}" alt="${desc}"><div class="desc">${desc} · ${modelCount} mod.</div><div class="max">${formatTemperature(consensusMax)}</div><div class="min">${formatTemperature(consensusMin)}</div>`;
     els.daily.appendChild(el);
   }
 }
@@ -688,7 +682,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=18').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=19').catch(err => console.warn('SW:', err));
   });
 }
 
