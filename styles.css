@@ -24,7 +24,8 @@ body{min-height:100vh;background:radial-gradient(circle at 50% -5%,#16466a 0,#08
 .card{border:1px solid #23485f;border-radius:22px;background:linear-gradient(145deg,rgba(15,47,68,.82),rgba(6,25,39,.88));box-shadow:0 16px 45px rgba(0,0,0,.2)}
 .hero{margin-top:18px;padding:24px 20px;display:flex;align-items:center;gap:18px}
 .hero-main{flex:1;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px;align-items:start}
-.hero-main > :is(.temperature,.feels,.observation){grid-column:1 / -1}
+.hero-main > :is(.temperature,.feels,.observation,.rain-outlook){grid-column:1 / -1}
+.rain-outlook{margin-top:10px;font-size:13px;font-weight:600;line-height:1.35;color:#c7e6f7}
 .hero-range{display:flex;gap:10px;text-align:right;margin:0;font-variant-numeric:tabular-nums}
 .hero-range dt{color:#a9bdca;font-size:11px}
 .hero-range dd{margin:0;font-size:17px;font-weight:750;line-height:1.2}

@@ -10,7 +10,7 @@ const $ = id => document.getElementById(id);
 const els = {
   location:$('location'),updated:$('updated'),status:$('status'),icon:$('weatherIcon'),condition:$('condition'),observation:$('observation'),
   temperature:$('temperature'),apparent:$('apparent'),rain:$('rain'),humidity:$('humidity'),
-  todayMax:$('todayMax'),todayMin:$('todayMin'),
+  todayMax:$('todayMax'),todayMin:$('todayMin'),rainOutlook:$('rainOutlook'),
   hourly:$('hourly'),daily:$('daily'),lat:$('lat'),lon:$('lon'),accuracy:$('accuracy'),
   message:$('message'),retry:$('retry'),consensusBadge:$('consensusBadge'),
   consensusTitle:$('consensusTitle'),consensusSub:$('consensusSub'),modelDetails:$('modelDetails'),
@@ -405,6 +405,67 @@ function observationWeatherInfo(observation,lat,lon){
   return null;
 }
 
+const RAIN_HOUR = 3600000;
+const RAIN_CODES = new Set([51,53,55,56,57,61,63,65,66,67,80,81,82,95,96,99]);
+const SNOW_CODES = new Set([71,73,75,77,85,86]);
+
+function rainVote(amount, code, temperature, isSmn){
+  if(!Number.isFinite(amount) || amount < 0) return null;
+  if(amount < 0.1) return false;
+  // WRF only exposes total precipitation. Temperature is a proxy for liquid phase.
+  if(isSmn) return Number.isFinite(temperature) && temperature >= 2 ? true : null;
+  if(RAIN_CODES.has(code)) return true;
+  return SNOW_CODES.has(code) ? false : null;
+}
+
+function rainSeries({key,data}){
+  const series = new Map();
+  if(key === 'smn'){
+    for(const point of data.data){
+      const end = Date.parse(point.validTime);
+      if(!Number.isFinite(end) || !Number.isInteger(point.lead) || point.lead < 1) continue;
+      series.set(end, rainVote(point.precipitation, null, point.temperature, true));
+    }
+    return series;
+  }
+  const hourly = data.hourly;
+  if(!Number.isFinite(data.utc_offset_seconds)) return series;
+  for(const [index,time] of hourly.time.entries()){
+    // Open-Meteo returns local ISO timestamps without an offset.
+    const end = Date.parse(time + 'Z') - data.utc_offset_seconds * 1000;
+    if(!Number.isFinite(end)) continue;
+    series.set(end, rainVote(hourly.precipitation?.[index], hourly.weather_code?.[index], null, false));
+  }
+  return series;
+}
+
+function rainOutlook(items, now = Date.now()){
+  const series = items.map(rainSeries);
+  const cutoff = now + 24 * RAIN_HOUR;
+  const anchor = series.find(model => model.size)?.keys().next().value ?? 0;
+  const firstEnd = anchor + (Math.floor((now - anchor) / RAIN_HOUR) + 1) * RAIN_HOUR;
+  let fullyDry = true;
+  let hasRainSignal = false;
+  // Each amount belongs to the hour ending at its timestamp.
+  for(let end = firstEnd; end - RAIN_HOUR < cutoff; end += RAIN_HOUR){
+    const votes = series.map(model => model.get(end));
+    const wet = votes.filter(vote => vote === true).length;
+    const dry = votes.filter(vote => vote === false).length;
+    const midpoint = end - RAIN_HOUR / 2;
+    if(wet >= 2 && wet > dry && midpoint < cutoff){
+      const hours = Math.round((midpoint - now) / RAIN_HOUR);
+      if(hours < 1) return 'Lluvia probable en la próxima hora';
+      if(hours === 1) return 'Lluvia probable en aproximadamente 1 hora';
+      return 'Lluvia probable en aproximadamente ' + hours + ' horas';
+    }
+    if(wet > 0) hasRainSignal = true;
+    if(dry < 2 || wet > 0 || votes.includes(null)) fullyDry = false;
+  }
+  if(fullyDry) return 'No hay lluvias previstas en las próximas 24 horas';
+  if(hasRainSignal) return 'Posible lluvia en las próximas 24 horas, sin consenso sobre el horario';
+  return 'Pronóstico de lluvia incierto para las próximas 24 horas';
+}
+
 function renderMain(items,position,placeName=null,observation=null){
   const smn=items.find(x=>x.key==='smn');
   const targetIso=smn?.data?.data?.[0]?.validTime || null;
@@ -422,6 +483,7 @@ function renderMain(items,position,placeName=null,observation=null){
   els.status.textContent=`${items.length} MODELOS OK`;
   els.icon.src=weatherIconSrc(icon);
   els.condition.textContent=condition;
+  els.rainOutlook.textContent=rainOutlook(items);
   // AHORA: observación meteorológica real de la estación SMN más cercana.
   // Si no hay una observación reciente, se conserva el consenso como fallback.
   const observed=observation && Number.isFinite(observation.temp);
@@ -590,6 +652,7 @@ function renderDaily(items,lat=null,lon=null){
 
 function showGpsError(error){
   els.status.textContent='GPS';
+  els.rainOutlook.textContent='Pronóstico de lluvia sin ubicación confirmada';
   els.location.textContent='Ubicación sin confirmar';
   els.updated.textContent='Elegí tu ciudad en Cambiar ubicación.';
   setMessage({1:'Permiso de ubicación denegado.',2:'No fue posible determinar tu ubicación.',3:'La solicitud de ubicación tardó demasiado.'}[error.code]||'No se pudo obtener la ubicación.');
@@ -635,6 +698,7 @@ async function loadWeather(){
   const requestId=++weatherRequestId;
   const place=selectedLocation;
   els.status.textContent='BUSCANDO';
+  els.rainOutlook.textContent='Consultando próxima lluvia…';
   setMessage('Obteniendo ubicación…');
 
   let position;
@@ -660,6 +724,7 @@ async function loadWeather(){
   const models=results.filter(result=>result.status==='fulfilled').map(result=>result.value);
   if(!models.length){
     els.status.textContent='ERROR';
+    els.rainOutlook.textContent='Pronóstico de lluvia no disponible';
     els.updated.textContent='No se pudo actualizar el pronóstico.';
     setMessage('Ningún modelo respondió. Revisá la conexión e intentá nuevamente.');
     return;
@@ -682,7 +747,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=19').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=20').catch(err => console.warn('SW:', err));
   });
 }
 
