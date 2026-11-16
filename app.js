@@ -466,6 +466,13 @@ function rainOutlook(items, now = Date.now()){
   return 'Pronóstico de lluvia incierto para las próximas 24 horas';
 }
 
+function renderTemperature(element, value){
+  const displayed = Number.isFinite(value) ? Math.round(value) : null;
+  element.textContent = displayed ?? '—';
+  element.classList.toggle('temperature-hot', displayed !== null && displayed >= 32);
+  element.classList.toggle('temperature-cold', displayed !== null && displayed <= 10);
+}
+
 function renderMain(items,position,placeName=null,observation=null){
   const smn=items.find(x=>x.key==='smn');
   const targetIso=smn?.data?.data?.[0]?.validTime || null;
@@ -487,10 +494,10 @@ function renderMain(items,position,placeName=null,observation=null){
   // AHORA: observación meteorológica real de la estación SMN más cercana.
   // Si no hay una observación reciente, se conserva el consenso como fallback.
   const observed=observation && Number.isFinite(observation.temp);
-  els.temperature.textContent=observed ? Math.round(observation.temp) : (Number.isFinite(c.temp)?Math.round(c.temp):'—');
-  els.apparent.textContent=observed
-    ? Math.round(apparentSMN(observation.temp,observation.humidity,observation.windSpeed) ?? observation.temp)
-    : (Number.isFinite(c.apparent)?Math.round(c.apparent):'—');
+  renderTemperature(els.temperature, observed ? observation.temp : c.temp);
+  renderTemperature(els.apparent, observed
+    ? apparentSMN(observation.temp,observation.humidity,observation.windSpeed) ?? observation.temp
+    : c.apparent);
   els.rain.textContent=`${c.precipitation.toFixed(1)} mm`;
   els.humidity.textContent=observed && Number.isFinite(observation.humidity)
     ? `${Math.round(observation.humidity)}%`
@@ -745,7 +752,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=21').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=22').catch(err => console.warn('SW:', err));
   });
 }
 
