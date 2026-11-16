@@ -72,7 +72,6 @@ function weatherInfoAtTime(code,date,lat,lon){
   return [isNightTime(date,lat,lon) ? (nightIcons[icon] || icon) : icon, desc];
 }
 
-const fmtHour = iso => new Intl.DateTimeFormat('es-AR',{hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
 const fmtDay = iso => new Intl.DateTimeFormat('es-AR',{weekday:'short',day:'2-digit'}).format(new Date(`${iso}T12:00:00`)).replace('.','');
 const setMessage = text => els.message.textContent = text;
 const formatTemperature = temp => Number.isFinite(temp) ? `${Math.round(temp)}°` : '—';
@@ -543,49 +542,103 @@ function renderMain(items,position,placeName=null,observation=null){
     : 'SMN, ECMWF, GFS e ICON conectados correctamente.');
 }
 
-function findOpenMeteoIndexByTime(data, targetTime){
-  return currentIndex(data,targetTime);
+function hourlyForecast(items, now = Date.now()){
+  const series = items.map(({key,data}) => {
+    if(key === 'smn'){
+      return new Map(data.data.map(point => [Date.parse(point.validTime), {
+        key, temp:point.temperature, precip:point.precipitation, code:null
+      }]));
+    }
+    const h = data.hourly;
+    return new Map(h.time.map((time,i) => [Date.parse(time + 'Z') - data.utc_offset_seconds * 1000, {
+      key, temp:h.temperature_2m[i], precip:h.precipitation?.[i], code:h.weather_code?.[i]
+    }]));
+  });
+  const anchor = series.flatMap(model => [...model.keys()]).find(Number.isFinite);
+  if(anchor === undefined) return [];
+  const start = anchor + Math.round((now - anchor) / RAIN_HOUR) * RAIN_HOUR;
+  return Array.from({length:6}, (_, offset) => {
+    const time = start + offset * RAIN_HOUR;
+    const hourlySnaps = series.map(model => model.get(time)).filter(Boolean);
+    const hc=consensusFor(hourlySnaps);
+    const main=hc.main.length>=2 ? hc.main : hourlySnaps;
+    const precipVals=main.map(x=>x.precip).filter(value=>Number.isFinite(value) && value>=0);
+    const precip=hc.main.length>=2 && precipVals.length
+      ? precipVals.reduce((sum,value)=>sum+value,0)/precipVals.length
+      : median(precipVals);
+    const codeVals=main.filter(x=>Number.isFinite(x.code)).map(x=>x.code);
+    return {time, temp:hc.temp, precip, code:codeVals[Math.floor(codeVals.length/2)]};
+  });
 }
 
 function renderHourly(items,lat=null,lon=null){
-  const smn=items.find(x=>x.key==='smn');
-  const smnHours=smn?.data?.data || [];
-  const fallback=items.find(x=>x.key!=='smn');
-  const base=fallback?.data?.hourly;
-  els.hourly.innerHTML='';
+  const hours = hourlyForecast(items);
+  els.hourly.replaceChildren();
+  if(!hours.length) return;
+  const timezone = items.find(item => item.key !== 'smn')?.data.timezone;
+  const clock = new Intl.DateTimeFormat('es-AR',{timeZone:timezone,hour:'2-digit',minute:'2-digit',hour12:false});
+  const temperatures = hours.map(hour => hour.temp).filter(Number.isFinite);
+  const min = Math.min(...temperatures);
+  const max = Math.max(...temperatures);
+  const range = Math.max(8,max-min);
+  const rainMax = Math.max(5,...hours.map(hour => hour.precip ?? 0));
+  const plotHeight = 112;
+  const points = hours.map(hour => Number.isFinite(hour.temp)
+    ? 64 - (hour.temp - (min+max)/2) * 64 / range
+    : null);
 
-  for(let off=0;off<6;off++){
-    const targetTime=smnHours[off]?.validTime || (base ? base.time[currentIndex(fallback.data)] : null);
-    if(!targetTime) break;
-    const vals=[];
-
-    for(const item of items){
-      if(item.key==='smn'){
-        const d=smnHours[off];
-        if(d && Number.isFinite(Number(d.temperature))) vals.push({temp:Number(d.temperature),precip:Number(d.precipitation??0),code:null});
-      } else {
-        const h=item.data.hourly;
-        const j=findOpenMeteoIndexByTime(item.data,targetTime);
-        vals.push({temp:Number(h.temperature_2m[j]),precip:Number(h.precipitation[j]??0),code:Number(h.weather_code[j])});
-      }
-    }
-    if(!vals.length) continue;
-    const hourlySnaps=vals.map((x,i)=>({...x,key:String(i),name:items[i]?.key ? MODELS[items[i].key]?.name || String(i) : String(i)}));
-    const hc=consensusFor(hourlySnaps);
-    const temp=hc.temp;
-    const main=hc.main.length>=2 ? hc.main : hourlySnaps;
-    const precipVals=main.map(x=>x.precip).filter(Number.isFinite);
-    const precip=hc.main.length>=2
-      ? (precipVals.length ? precipVals.reduce((s,x)=>s+x,0)/precipVals.length : 0)
-      : (precipVals.length ? median(precipVals) : 0);
-    const codeVals=main.filter(x=>Number.isFinite(x.code)).map(x=>x.code);
-    const code=codeVals.length ? codeVals[Math.floor(codeVals.length/2)] : 0;
-    const [ico,desc]=weatherInfoAtTime(code,new Date(targetTime),lat,lon);
-    const el=document.createElement('div');
-    el.className=`hour ${off===0?'now':''}`;
-    el.innerHTML=`<div class="time">${off===0?'Ahora':fmtHour(targetTime)}</div><img class="icon" src="${weatherIconSrc(ico)}" alt="${desc}"><div class="temp">${Math.round(temp)}°</div><div class="rain">💧 ${precip.toFixed(1)} mm</div>`;
-    els.hourly.appendChild(el);
+  const chart = document.createElement('div');
+  chart.className = 'hourly-chart';
+  for(const [index,hour] of hours.entries()){
+    const y = points[index];
+    const condition = Number.isFinite(hour.code)
+      ? weatherInfoAtTime(hour.code,new Date(hour.time),lat,lon)
+      : null;
+    const column = document.createElement('div');
+    column.className = index === 0 ? 'hour now' : 'hour';
+    column.innerHTML = `
+      <div class="hour-plot">
+        <div class="hour-water" aria-hidden="true" style="height:${(hour.precip ?? 0)/rainMax*80}%"></div>
+        <div class="temp" style="top:${y ?? 64}px">${y === null ? '—' : Math.round(hour.temp)+'°'}</div>
+      </div>
+      <div class="time">${index === 0 ? 'Ahora' : clock.format(hour.time)}</div>
+      ${condition
+        ? `<img class="icon" src="${weatherIconSrc(condition[0])}" alt="${condition[1]}">`
+        : '<span class="icon" aria-hidden="true"></span>'}
+      <div class="rain">${Number.isFinite(hour.precip) ? hour.precip.toFixed(1)+' mm' : '— mm'}</div>`;
+    chart.appendChild(column);
   }
+  const canvas = document.createElement('canvas');
+  canvas.className = 'hourly-line';
+  canvas.setAttribute('aria-hidden','true');
+  chart.appendChild(canvas);
+  els.hourly.appendChild(chart);
+
+  const width = chart.clientWidth;
+  const scale = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width*scale);
+  canvas.height = Math.round(plotHeight*scale);
+  const ctx = canvas.getContext('2d');
+  if(!ctx) return;
+  ctx.scale(scale,scale);
+  ctx.strokeStyle = '#ffd476';
+  ctx.fillStyle = '#ffd476';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  points.forEach((y,index) => {
+    if(y === null) return;
+    const x = (index+.5)*width/hours.length;
+    if(index === 0 || points[index-1] === null) ctx.moveTo(x,y);
+    else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  points.forEach((y,index) => {
+    if(y === null) return;
+    ctx.beginPath();
+    ctx.arc((index+.5)*width/hours.length,y,2.5,0,Math.PI*2);
+    ctx.fill();
+  });
 }
 
 function smnDailyMap(smn,timezone){
@@ -752,7 +805,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=22').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=23').catch(err => console.warn('SW:', err));
   });
 }
 
