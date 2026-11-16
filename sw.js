@@ -1,4 +1,4 @@
-const CACHE = "clima-consenso-v12";
+const CACHE = "clima-consenso-v13";
 const WEATHER_ICONS = [
   "clear", "cloudy", "drizzle", "flurries", "heavy", "heavy_snow", "isolated_tstorms",
   "mostly_clear", "mostly_cloudy", "mostly_cloudy_night", "mostly_sunny", "partly_clear",
@@ -7,7 +7,7 @@ const WEATHER_ICONS = [
 ];
 const ASSETS = [
   "./icons/icon.svg", "./", "./index.html", "./styles.css?v=8", "./observation-ui.css?v=1",
-  "./app.js?v=20", "./observation-ui.js?v=1", "./manifest.json?v=2",
+  "./app.js?v=21", "./observation-ui.js?v=1", "./manifest.json?v=2",
   ...WEATHER_ICONS.map(icon => `./icons/weather/${icon}_dark.svg`)
 ];
 

@@ -497,6 +497,7 @@ function renderMain(items,position,placeName=null,observation=null){
     : (Number.isFinite(c.humidity)?`${Math.round(c.humidity)}%`:'—');
 
   if(els.observation){
+    els.observation.hidden=!observed;
     if(observed){
       const observationTime=new Date(observation.time);
       const clock=Number.isNaN(observationTime.getTime())
@@ -504,10 +505,6 @@ function renderMain(items,position,placeName=null,observation=null){
         : observationTime.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
       const age=observation.ageMinutes<1 ? 'ahora' : `hace ${Math.round(observation.ageMinutes)} min`;
       els.observation.textContent=`📍 Observación SMN · ${observation.station.name} · ${clock} · ${age} · ${observation.station.distanceKm.toFixed(1)} km`;
-      els.observation.classList.remove('fallback');
-    }else{
-      els.observation.textContent='🔮 Temperatura actual estimada por modelos · sin observación SMN reciente';
-      els.observation.classList.add('fallback');
     }
   }
   els.lat.textContent=position.coords.latitude.toFixed(6);
@@ -699,6 +696,7 @@ async function loadWeather(){
   const place=selectedLocation;
   els.status.textContent='BUSCANDO';
   els.rainOutlook.textContent='Consultando próxima lluvia…';
+  els.observation.hidden=true;
   setMessage('Obteniendo ubicación…');
 
   let position;
@@ -747,7 +745,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=20').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=21').catch(err => console.warn('SW:', err));
   });
 }
 
