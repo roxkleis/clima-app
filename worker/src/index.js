@@ -1,6 +1,6 @@
 ﻿import { runNotificationEngine, ensureNotifyMaxTempColumn } from "./alerts.js";
 import { pushEndpoint, sendPush } from "./push.js";
-import { generateWeatherOverview, chatWithGemini } from "./gemini.js";
+import { handleGeminiRequest } from "./gemini-http.js";
 
 const HEADER_BYTES_PER_VALUE = 2;
 const VARIABLES = ["temperature", "humidity", "precipitation", "windSpeed", "windDirection"];
@@ -111,7 +111,7 @@ function corsHeaders(request) {
   return {
     "Access-Control-Allow-Origin": allowed,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Cache-Control": "no-store",
   };
 }
@@ -729,23 +729,13 @@ export default {
           headers: { ...headers, "Content-Type": "application/json; charset=utf-8" },
         });
       }
-      if (url.pathname === "/gemini/overview" && request.method === "POST") {
-        let body;
-        try { body = await request.json(); } catch (_) { body = {}; }
-        const result = await generateWeatherOverview(body.context || {}, env);
-        return new Response(JSON.stringify(result), {
-          status: result.ok ? 200 : (result.status || 400),
-          headers: { ...headers, "Content-Type": "application/json" }
-        });
-      }
-      if (url.pathname === "/gemini/chat" && request.method === "POST") {
-        let body;
-        try { body = await request.json(); } catch (_) { body = {}; }
-        const result = await chatWithGemini(body.question || "", body.context || {}, env);
-        return new Response(JSON.stringify(result), {
-          status: result.ok ? 200 : (result.status || 400),
-          headers: { ...headers, "Content-Type": "application/json" }
-        });
+      if (url.pathname === "/gemini/overview" || url.pathname === "/gemini/chat") {
+        if (request.method !== "POST") {
+          return Response.json({ ok: false, error: "METHOD_NOT_ALLOWED" }, {
+            status: 405, headers: { ...headers, Allow: "POST, OPTIONS" },
+          });
+        }
+        return await handleGeminiRequest(request, env, headers, url.pathname);
       }
       if (url.pathname === "/push/subscribe" && request.method === "POST") return await pushSettings(request, env, false);
       if (url.pathname === "/push/preferences" && request.method === "POST") return await pushSettings(request, env, true);

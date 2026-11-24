@@ -38,3 +38,5 @@ El Worker consulta el canal CAP del SMN cada cinco minutos. Cruza sus polígonos
 Si el canal del SMN limita las descargas, el Worker consulta los avisos CAP del mismo emisor publicados por el FOSS Public Alert Server de KDE. [Canal oficial del SMN](https://ssl.smn.gob.ar/CAP/AR.php) · [Fuentes de KDE](https://alerts.kde.org/sources/status)
 
 Para actualizar una base D1 anterior que todavía no tenga la preferencia nocturna, ejecutar una sola vez `ALTER TABLE push_subscriptions ADD COLUMN night_minimum INTEGER NOT NULL DEFAULT 1` antes de desplegar.
+
+Antes de habilitar Gemini, aplicar la migración D1 `0003_gemini_quota_cache.sql` y configurar los secretos del Worker `GEMINI_API_KEY` y `GEMINI_ACCESS_TOKEN`. El segundo debe ser un token aleatorio de al menos 32 caracteres en formato base64url. Las rutas de Gemini lo reciben mediante el encabezado HTTP `Authorization: Bearer …`.

@@ -1,12 +1,20 @@
-// Módulo de Gemini 2.5 Flash-Lite (nivel gratuito).
-// Diseñado para máximo ahorro de cuota (caching de 45 min y llamadas agrupadas).
+import { reserveGeminiRequest, useGeminiCache } from "./gemini-storage.js";
 
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
 
-export async function callGeminiRaw(prompt, systemInstruction, env, asJson = false) {
+async function callGeminiRaw(prompt, systemInstruction, env, { asJson = false, channel = "interactive" } = {}) {
   const apiKey = env?.GEMINI_API_KEY;
   if (!apiKey) {
-    return { ok: false, error: "NO_API_KEY", message: "Clave de Gemini API no configurada." };
+    return { ok: false, status: 503, error: "NO_API_KEY", message: "Gemini todavía no está configurado." };
+  }
+
+  try {
+    if (!await reserveGeminiRequest(env.DB, channel)) {
+      return { ok: false, status: 429, error: "QUOTA_EXHAUSTED", message: "Se alcanzó el límite diario de Gemini." };
+    }
+  } catch {
+    console.warn("gemini-quota-unavailable");
+    return { ok: false, status: 503, error: "QUOTA_UNAVAILABLE", message: "Gemini no está disponible en este momento." };
   }
 
   const payload = {
@@ -45,42 +53,26 @@ export async function callGeminiRaw(prompt, systemInstruction, env, asJson = fal
       return {
         ok: false,
         error: "GEMINI_ERROR",
-        message: `Gemini devolvió HTTP ${response.status}.`,
-        status: response.status
+        message: response.status === 429
+          ? "Gemini alcanzó su límite de uso. Probá más tarde."
+          : "Gemini no está disponible en este momento.",
+        status: response.status === 429 ? 429 : 502
       };
     }
 
     const data = await response.json();
     const candidate = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!candidate) {
-      return { ok: false, error: "EMPTY_RESPONSE", message: "Respuesta vacía de Gemini." };
+    if (typeof candidate !== "string" || !candidate.trim()) {
+      return { ok: false, status: 502, error: "EMPTY_RESPONSE", message: "Respuesta vacía de Gemini." };
     }
 
     return { ok: true, text: candidate };
   } catch {
-    return { ok: false, error: "NETWORK_ERROR", message: "Error al conectar con Gemini." };
+    return { ok: false, status: 502, error: "NETWORK_ERROR", message: "Error al conectar con Gemini." };
   }
 }
 
 export async function generateWeatherOverview(ctx, env) {
-  if (!env?.GEMINI_API_KEY) {
-    return { ok: false, error: "NO_API_KEY" };
-  }
-
-  // Cache inteligente de 45 minutos en Cloudflare
-  const cacheKeyStr = `https://clima-gemini-cache/overview?loc=${encodeURIComponent(ctx.location || "")}&h=${ctx.dateHour || ""}`;
-  const cacheKey = new Request(cacheKeyStr);
-  const cache = typeof caches !== "undefined" && caches.default ? caches.default : null;
-
-  if (cache) {
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      try {
-        return await cached.json();
-      } catch (_) {}
-    }
-  }
-
   const systemPrompt = `Eres el asistente meteorológico inteligente de la aplicación "Clima Consenso".
 Tu tono es profesional, amigable, claro y natural (español de Argentina).
 Analiza los datos reales del pronóstico y devuelve un JSON estricto con las 4 claves especificadas.
@@ -88,7 +80,7 @@ No uses markdown fuera del JSON. Devuelve únicamente el objeto JSON.`;
 
   const userPrompt = `Analiza estos datos meteorológicos actuales y de consenso entre modelos:
 Ubicación: ${ctx.location || "Buenos Aires"}
-Hora local: ${ctx.localTime || "Actual"}
+Hora local: ${ctx.dateHour || ctx.localTime || "Actual"}
 Temperatura actual: ${ctx.temp != null ? ctx.temp + "°C" : "Desconocida"} (Sensación: ${ctx.apparent != null ? ctx.apparent + "°C" : "—"})
 Humedad: ${ctx.humidity != null ? ctx.humidity + "%" : "—"}, Precipitación: ${ctx.precip != null ? ctx.precip + " mm" : "0 mm"}
 Condición: ${ctx.condition || "Variable"}
@@ -110,34 +102,29 @@ Genera un JSON con esta estructura exacta:
   "alertsSummary": ${ctx.alertsDetail && ctx.alertsDetail !== "Ninguna alerta activa" ? '"Resumen claro de la alerta: qué fenómeno esperar, franja horaria crítica y medidas preventivas."' : 'null'}
 }`;
 
-  const result = await callGeminiRaw(userPrompt, systemPrompt, env, true);
-  if (!result.ok) return result;
-
-  try {
-    const parsed = JSON.parse(result.text);
-    const finalResponse = { ok: true, data: parsed };
-
-    if (cache) {
-      const resp = new Response(JSON.stringify(finalResponse), {
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "public, max-age=2700" // 45 min
-        }
-      });
-      await cache.put(cacheKey, resp.clone());
+  const cacheParts = [
+    "overview", GEMINI_API_URL, ctx.locationId, ctx.lat, ctx.lon,
+    ctx.forecastRevision, ctx.alertsRevision, systemPrompt, userPrompt,
+  ];
+  return useGeminiCache(env.DB, cacheParts, async () => {
+    const result = await callGeminiRaw(userPrompt, systemPrompt, env, { asJson: true });
+    if (!result.ok) return result;
+    try {
+      const data = JSON.parse(result.text);
+      const fields = [data?.summary, data?.discrepancies, data?.lifestyle?.outfit,
+        data?.lifestyle?.outdoor, data?.lifestyle?.laundry];
+      if (fields.every((field) => typeof field === "string" && field.trim()) &&
+        (data.alertsSummary === null || typeof data.alertsSummary === "string")) {
+        return { ok: true, data };
+      }
+    } catch {
+      // Una respuesta inválida no debe quedar en caché.
     }
-
-    return finalResponse;
-  } catch (e) {
-    return { ok: false, error: "JSON_PARSE_ERROR", message: "Respuesta de Gemini mal formateada." };
-  }
+    return { ok: false, status: 502, error: "INVALID_RESPONSE", message: "Gemini devolvió un parte incompleto." };
+  });
 }
 
 export async function chatWithGemini(question, weatherContext, env) {
-  if (!env?.GEMINI_API_KEY) {
-    return { ok: false, error: "NO_API_KEY", message: "Configurá una clave de Gemini para chatear." };
-  }
-
   const systemPrompt = `Eres el copiloto meteorológico de la aplicación "Clima Consenso".
 Respondes preguntas cotidianas sobre el clima de forma directa, útil, precisa y concisa (español de Argentina).
 Usa EXCLUSIVAMENTE los datos meteorológicos provistos (consenso entre SMN, ECMWF, GFS e ICON).
@@ -155,4 +142,22 @@ Si te preguntan por horarios de lluvia, actividades, ropa o planes, da una respu
 Pregunta del usuario: "${question}"`;
 
   return await callGeminiRaw(prompt, systemPrompt, env);
+}
+
+export async function rewriteSummaryNotification(body, night, eventKey, env) {
+  if (!env?.GEMINI_API_KEY) return body;
+
+  const period = night ? "la madrugada" : "el resumen del día";
+  const prompt = `Crea una notificación push ultra concisa (máximo 100 caracteres) en tono amigable argentino para ${period}: ${body}. Solo el texto de la notificación sin comillas.`;
+  const instructions = "Sé conciso, natural, sin emojis repetidos, máximo 100 caracteres.";
+  const cacheParts = ["push", GEMINI_API_URL, eventKey, instructions, prompt];
+  const result = await useGeminiCache(env.DB, cacheParts, async () => {
+    const response = await callGeminiRaw(prompt, instructions, env, { channel: "push" });
+    if (!response.ok) return response;
+    const text = response.text.trim().replace(/^["']|["']$/g, "").trim();
+    return text && Array.from(text).length <= 100 && !/[\r\n]/.test(text)
+      ? { ok: true, text }
+      : { ok: false };
+  });
+  return result.ok ? result.text : body;
 }
