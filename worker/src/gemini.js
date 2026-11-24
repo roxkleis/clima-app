@@ -3,7 +3,7 @@ import { reserveGeminiRequest, useGeminiCache } from "./gemini-storage.js";
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
 
 async function callGeminiRaw(prompt, systemInstruction, env, { asJson = false, channel = "interactive", history = [] } = {}) {
-  const apiKey = env?.GEMINI_API_KEY;
+  const apiKey = env?.GEMINI_API_KEY?.trim();
   if (!apiKey) {
     return { ok: false, status: 503, error: "NO_API_KEY", message: "Gemini todavía no está configurado." };
   }
@@ -49,11 +49,12 @@ async function callGeminiRaw(prompt, systemInstruction, env, { asJson = false, c
         "x-goog-api-key": apiKey
       },
       body: JSON.stringify(payload),
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(10000)
     });
 
     if (!response.ok) {
+      console.warn("gemini-upstream-status", response.status);
       return {
         ok: false,
         error: "GEMINI_ERROR",
@@ -71,7 +72,12 @@ async function callGeminiRaw(prompt, systemInstruction, env, { asJson = false, c
     }
 
     return { ok: true, text: candidate };
-  } catch {
+  } catch (error) {
+    const message = String(error?.message ?? "");
+    const reason = /header|ByteString/i.test(message) ? "invalid-header"
+      : /json|unexpected token/i.test(message) ? "invalid-json"
+      : /timeout|timed out|abort/i.test(message) ? "timeout" : "transport";
+    console.warn("gemini-upstream-error", reason);
     return { ok: false, status: 502, error: "NETWORK_ERROR", message: "Error al conectar con Gemini." };
   }
 }
