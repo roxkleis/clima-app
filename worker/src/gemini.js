@@ -1,6 +1,6 @@
 import { reserveGeminiRequest, useGeminiCache } from "./gemini-storage.js";
 
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent";
 
 async function callGeminiRaw(prompt, systemInstruction, env, { asJson = false, channel = "interactive", history = [] } = {}) {
   const apiKey = env?.GEMINI_API_KEY?.trim();
