@@ -226,8 +226,9 @@
     controls.retry.hidden = true;
     controls.access.disabled = weather.state !== "ready" && !accessToken;
     accessSubmit.disabled = weather.state !== "ready";
-    controls.status.textContent = weather.state === "loading" ? "Cargando pronóstico…" : "";
-    controls.chatStatus.textContent = weather.state === "unavailable"
+    controls.status.textContent = weather.state === "saved" ? "Gemini requiere un pronóstico actualizado."
+      : weather.state === "loading" ? "Cargando pronóstico…" : "";
+    controls.chatStatus.textContent = ["unavailable", "saved"].includes(weather.state)
       ? "Actualizá el clima para preguntar."
       : weather.state === "loading" ? "Cargando pronóstico…" : "";
     syncChat();
@@ -323,7 +324,7 @@
     if (accessToken) openChat();
     else {
       const { state } = api.weather();
-      openAccess(true, state === "unavailable" ? "Actualizá el clima antes de activar Gemini."
+      openAccess(true, ["unavailable", "saved"].includes(state) ? "Actualizá el clima antes de activar Gemini."
         : state === "loading" ? "Esperá a que se cargue el pronóstico." : "");
     }
   });

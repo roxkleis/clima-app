@@ -1,4 +1,5 @@
-﻿const CACHE = "clima-consenso-v19";
+﻿const CACHE_PREFIX = "clima-consenso-v";
+const CACHE = `${CACHE_PREFIX}20`;
 const WEATHER_ICONS = [
   "clear", "cloudy", "drizzle", "flurries", "heavy", "heavy_snow", "isolated_tstorms",
   "mostly_clear", "mostly_cloudy", "mostly_cloudy_night", "mostly_sunny", "partly_clear",
@@ -6,38 +7,45 @@ const WEATHER_ICONS = [
   "snow_showers", "strong_tstorms", "sunny", "wintry_mix"
 ];
 const ASSETS = [
-  "./icons/icon.svg", "./", "./index.html", "./styles.css?v=12", "./observation-ui.css?v=1", "./gemini-ui.css?v=1",
-  "./app.js?v=27", "./observation-ui.js?v=1", "./gemini-ui.js?v=1", "./manifest.json?v=3",
+  "./icons/icon.svg", "./icons/icon-192.png", "./icons/icon-512.png",
+  "./", "./index.html", "./styles.css?v=12", "./observation-ui.css?v=1", "./gemini-ui.css?v=1",
+  "./app.js?v=28", "./observation-ui.js?v=1", "./gemini-ui.js?v=2", "./manifest.json?v=3",
   ...WEATHER_ICONS.map(icon => `./icons/weather/${icon}_dark.svg`)
 ];
+const APP_URL = new URL("./", self.registration.scope);
+const INDEX_URL = new URL("./index.html", APP_URL);
+const CACHEABLE_URLS = new Set(ASSETS.map(asset => new URL(asset, APP_URL).href));
 
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
-  self.skipWaiting();
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", event => {
   event.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    )
+      Promise.all(keys.filter(k => k.startsWith(CACHE_PREFIX) && k !== CACHE).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener("fetch", event => {
   const url = new URL(event.request.url);
-  if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
-
-  event.respondWith(
-    fetch(event.request)
-      .then(response => {
-        const copy = response.clone();
-        caches.open(CACHE).then(cache => cache.put(event.request, copy));
-        return response;
-      })
-      .catch(() => caches.match(event.request))
-  );
+  if (event.request.method !== "GET" || url.origin !== APP_URL.origin) return;
+  const appNavigation = event.request.mode === "navigate" &&
+    (url.pathname === APP_URL.pathname || url.pathname === INDEX_URL.pathname);
+  if (!appNavigation && !CACHEABLE_URLS.has(url.href)) return;
+  const key = appNavigation ? APP_URL.href : url.href;
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE).catch(() => null);
+    try {
+      const response = await fetch(event.request);
+      if (response.ok && cache) await cache.put(key, response.clone()).catch(() => {});
+      if (response.status >= 500 && cache) return await cache.match(key) || response;
+      return response;
+    } catch {
+      return (await cache?.match(key)) || Response.error();
+    }
+  })());
 });
 
 function cleanSmnNotification(data) {

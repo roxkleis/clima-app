@@ -473,24 +473,30 @@ function renderTemperature(element, value){
   element.classList.toggle('temperature-cold', displayed !== null && displayed <= 10);
 }
 
-function renderMain(items,position,placeName=null,observation=null){
+function renderMain(items,position,placeName=null,observation=null,{saved=false,now=Date.now()}={}){
   const smn=items.find(x=>x.key==='smn');
-  const targetIso=smn?.data?.data?.[0]?.validTime || null;
+  const targetIso=smn?.data?.data?.[0]?.validTime || new Date(now).toISOString();
   const snaps=items.map(x=>currentSnapshot(x,targetIso));
   const c=consensusFor(snaps);
   const lat=position.coords.latitude;
   const lon=position.coords.longitude;
-  const currentDate=new Date(observation?.time || targetIso || Date.now());
+  const currentDate=new Date(observation?.time || targetIso);
   const observedCondition=observationWeatherInfo(observation,lat,lon);
   const [icon,condition]=observedCondition || weatherInfoAtTime(consensusWeatherCode(snaps),currentDate,lat,lon);
 
   els.location.textContent=placeName || 'Mi ubicación';
-  els.updated.textContent=`Actualizado ${new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}`;
+  els.updated.textContent=saved
+    ? `Guardado el ${new Date(now).toLocaleString('es-AR',{dateStyle:'short',timeStyle:'short'})}`
+    : `Actualizado ${new Date(now).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}`;
   if(position.coords.accuracy>LOCAL_WEATHER_ACCURACY) els.updated.textContent+=' · Ubicación aproximada';
-  els.status.textContent=`${items.length} MODELOS OK`;
+  els.status.textContent=saved ? 'GUARDADO' : `${items.length} MODELOS OK`;
+  els.icon.hidden=false;
   els.icon.src=weatherIconSrc(icon);
   els.condition.textContent=condition;
-  els.rainOutlook.textContent=rainOutlook(items);
+  const rainStatus=rainOutlook(items,now);
+  els.rainOutlook.textContent=saved ? `Al guardar: ${rainStatus}` : rainStatus;
+  els.todayMax.closest('dl')?.setAttribute('aria-label',saved
+    ? 'Temperaturas en el pronóstico guardado' : 'Temperaturas pronosticadas para hoy');
   // AHORA: observación meteorológica real de la estación SMN más cercana.
   // Si no hay una observación reciente, se conserva el consenso como fallback.
   const observed=observation && Number.isFinite(observation.temp);
@@ -534,8 +540,13 @@ function renderMain(items,position,placeName=null,observation=null){
   els.consensusBadge.classList.toggle('split',c.split22);
 
   renderModelDetails(snaps,c);
-  renderHourly(items,lat,lon);
-  renderDaily(items,lat,lon);
+  renderHourly(items,lat,lon,now,saved);
+  renderDaily(items,saved);
+
+  if(saved){
+    setMessage('Se muestra el último pronóstico guardado para esta ubicación.');
+    return;
+  }
 
   const failed=Object.keys(MODELS).filter(k=>!items.some(x=>x.key===k));
   setMessage(failed.length
@@ -579,8 +590,8 @@ function hourlyForecast(items, now = Date.now()){
   });
 }
 
-function renderHourly(items,lat=null,lon=null){
-  const hours = hourlyForecast(items);
+function renderHourly(items,lat,lon,now,saved){
+  const hours = hourlyForecast(items,now);
   els.hourly.replaceChildren();
   if(!hours.length) return;
   const timezone = items.find(item => item.key !== 'smn')?.data.timezone;
@@ -603,13 +614,13 @@ function renderHourly(items,lat=null,lon=null){
       ? weatherInfoAtTime(hour.code,new Date(hour.time),lat,lon)
       : null;
     const column = document.createElement('div');
-    column.className = index === 0 ? 'hour now' : 'hour';
+    column.className = index === 0 && !saved ? 'hour now' : 'hour';
     column.innerHTML = `
       <div class="hour-plot">
         <div class="hour-water" aria-hidden="true" style="height:${(hour.precip ?? 0)/rainMax*80}%"></div>
         <div class="temp" style="top:${y ?? 64}px">${y === null ? '—' : Math.round(hour.temp)+'°'}</div>
       </div>
-      <div class="time">${index === 0 ? 'Ahora' : clock.format(hour.time)}</div>
+      <div class="time">${index === 0 && !saved ? 'Ahora' : clock.format(hour.time)}</div>
       ${condition
         ? `<img class="icon" src="${weatherIconSrc(condition[0])}" alt="${condition[1]}">`
         : '<span class="icon" aria-hidden="true"></span>'}
@@ -725,7 +736,7 @@ function dailyForecast(items, completeSmnDaysOnly=false){
   return daysData;
 }
 
-function renderDaily(items,lat=null,lon=null){
+function renderDaily(items,saved){
   const daysData=dailyForecast(items);
   els.daily.replaceChildren();
   els.todayMax.textContent=formatTemperature(daysData[0]?.max);
@@ -750,7 +761,7 @@ function renderDaily(items,lat=null,lon=null){
     const barHeight = Math.max(8, yMin - yMax);
 
     let dayTitle = 'Hoy';
-    if(d.index > 0){
+    if(saved || d.index > 0){
       const raw = fmtDay(d.dayKey);
       dayTitle = raw.charAt(0).toUpperCase() + raw.slice(1);
       dayTitle = dayTitle.replace(/(\D+)\s+(\d+)/, '$1. $2');
@@ -760,7 +771,7 @@ function renderDaily(items,lat=null,lon=null){
     const precipText = isWet ? `${d.precip.toFixed(1)}mm` : '0mm';
 
     const col = document.createElement('div');
-    col.className = d.index === 0 ? 'day-col today' : 'day-col';
+    col.className = d.index === 0 && !saved ? 'day-col today' : 'day-col';
     col.setAttribute('aria-label', `${dayTitle}: Máx ${formatTemperature(d.max)}, Mín ${formatTemperature(d.min)}, ${d.desc}, precipitación ${precipText}`);
 
     col.innerHTML = `
@@ -827,6 +838,9 @@ async function getBestPosition(){
 
 const GEMINI_WORKER = new URL(MODELS.smn.endpoint).origin;
 const WEATHER_CONTEXT_MAX_AGE = 30 * 60000;
+const SAVED_WEATHER_CACHE = 'clima-consenso-weather-v1';
+const SAVED_WEATHER_URL = new URL('./__saved-weather',document.baseURI).href;
+const SAVED_WEATHER_MAX_AGE = 24 * 60 * 60000;
 let weatherRequestId=0;
 let latestWeather=null;
 let weatherStatus={state:'loading'};
@@ -834,6 +848,72 @@ let weatherStatus={state:'loading'};
 function publishWeatherStatus(status){
   weatherStatus=status;
   window.dispatchEvent(new CustomEvent('clima:weather',{detail:status}));
+}
+
+async function saveWeather(snapshot,place){
+  const {latitude,longitude,accuracy}=snapshot.position.coords;
+  try{
+    const cache=await caches.open(SAVED_WEATHER_CACHE);
+    await cache.put(SAVED_WEATHER_URL,Response.json({
+      ...snapshot, position:{coords:{latitude,longitude,accuracy}}, manual:Boolean(place),
+    }));
+  }catch{}
+}
+
+async function readSavedWeather(place,position){
+  try{
+    const cache=await caches.open(SAVED_WEATHER_CACHE);
+    const saved=await (await cache.match(SAVED_WEATHER_URL))?.json();
+    const age=Date.now()-saved?.loadedAt;
+    if(!saved || !Number.isFinite(age) || age<0 || age>SAVED_WEATHER_MAX_AGE || saved.manual!==Boolean(place) ||
+      !Array.isArray(saved.models) || !saved.models.length || typeof saved.location!=='string') return null;
+    const {latitude,longitude}=saved.position?.coords ?? {};
+    if(!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    if(place && (place.latitude!==latitude || place.longitude!==longitude)) return null;
+    if(!place && position && (Math.abs(position.coords.latitude-latitude)>.05 ||
+      Math.abs(position.coords.longitude-longitude)>.05)) return null;
+    return saved;
+  }catch{
+    return null;
+  }
+}
+
+async function showSavedWeather(requestId,place,position=null){
+  const saved=await readSavedWeather(place,position);
+  if(requestId!==weatherRequestId) return true;
+  if(!saved) return false;
+  try{
+    renderMain(saved.models,saved.position,saved.location,saved.observation,{saved:true,now:saved.loadedAt});
+  }catch{
+    return false;
+  }
+  publishWeatherStatus({state:'saved',location:saved.location});
+  return true;
+}
+
+function clearWeatherValues(){
+  els.icon.hidden=true;
+  els.condition.textContent='Sin pronóstico disponible';
+  renderTemperature(els.temperature,null);
+  renderTemperature(els.apparent,null);
+  for(const element of [els.rain,els.humidity,els.todayMin,els.todayMax,els.consensusSub,els.lat,els.lon,els.accuracy]){
+    element.textContent='—';
+  }
+  els.consensusTitle.textContent='Consenso —';
+  els.consensusBadge.classList.remove('warn','split');
+  els.modelCards.replaceChildren();
+  els.hourly.replaceChildren();
+  els.daily.replaceChildren();
+}
+
+function showForecastError(location,message){
+  clearWeatherValues();
+  els.status.textContent='ERROR';
+  els.location.textContent=location || 'Mi ubicación';
+  els.rainOutlook.textContent='Pronóstico de lluvia no disponible';
+  els.updated.textContent='No se pudo actualizar el pronóstico.';
+  setMessage(message);
+  publishWeatherStatus({state:'unavailable'});
 }
 
 function weatherMetric(value){
@@ -952,11 +1032,19 @@ async function loadWeather(){
   els.observation.hidden=true;
   setMessage('Obteniendo ubicación…');
 
+  if(navigator.onLine===false){
+    if(!await showSavedWeather(requestId,place)){
+      showForecastError(place?.name,'No hay un pronóstico guardado para esta ubicación.');
+    }
+    return;
+  }
+
   let position;
   try{
     position=place ? {coords:{latitude:place.latitude,longitude:place.longitude,accuracy:null}} : await getBestPosition();
   }catch(error){
-    if(requestId===weatherRequestId){
+    if(requestId===weatherRequestId && !await showSavedWeather(requestId,place)){
+      clearWeatherValues();
       showGpsError(error);
       publishWeatherStatus({state:'unavailable'});
     }
@@ -977,19 +1065,20 @@ async function loadWeather(){
   if(requestId!==weatherRequestId) return;
   const models=results.filter(result=>result.status==='fulfilled').map(result=>result.value);
   if(!models.length){
-    els.status.textContent='ERROR';
-    els.rainOutlook.textContent='Pronóstico de lluvia no disponible';
-    els.updated.textContent='No se pudo actualizar el pronóstico.';
-    setMessage('Ningún modelo respondió. Revisá la conexión e intentá nuevamente.');
-    publishWeatherStatus({state:'unavailable'});
+    if(await showSavedWeather(requestId,place,position)) return;
+    showForecastError(location?.name,'Ningún modelo respondió. Revisá la conexión e intentá nuevamente.');
     return;
   }
-  renderMain(models,position,location?.name,observation);
-  latestWeather={models,position,location:location?.name || 'Mi ubicación',observation,loadedAt:Date.now()};
+  const loadedAt=Date.now();
+  renderMain(models,position,location?.name,observation,{now:loadedAt});
+  latestWeather={models,position,location:location?.name || 'Mi ubicación',observation,loadedAt};
+  void saveWeather(latestWeather,place);
   publishWeatherStatus({state:'ready',location:latestWeather.location,lat,lon});
 }
 
 els.retry.addEventListener('click',loadWeather);
+window.addEventListener('offline',loadWeather);
+window.addEventListener('online',loadWeather);
 function setDetails(open){
   els.modelDetails.classList.toggle('hidden', !open);
   els.consensusBadge.setAttribute('aria-expanded', String(open));
@@ -1004,7 +1093,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=27').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=28').catch(err => console.warn('SW:', err));
   });
 }
 
