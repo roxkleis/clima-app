@@ -1,5 +1,6 @@
 ﻿import { runNotificationEngine, ensureNotifyMaxTempColumn } from "./alerts.js";
 import { pushEndpoint, sendPush } from "./push.js";
+import { generateWeatherOverview, chatWithGemini } from "./gemini.js";
 
 const HEADER_BYTES_PER_VALUE = 2;
 const VARIABLES = ["temperature", "humidity", "precipitation", "windSpeed", "windDirection"];
@@ -104,7 +105,9 @@ async function getMetadata(env) {
 
 function corsHeaders(request) {
   const origin = request.headers.get("Origin");
-  const allowed = origin === "https://roxkleis.github.io" ? origin : "https://roxkleis.github.io";
+  const isAllowed = origin === "https://roxkleis.github.io" ||
+                    (origin && (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")));
+  const allowed = isAllowed ? origin : "https://roxkleis.github.io";
   return {
     "Access-Control-Allow-Origin": allowed,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -724,6 +727,24 @@ export default {
         const observation = await getNearestSMNObservation(lat, lon);
         return new Response(JSON.stringify({ ok: true, source: "SMN", observation }), {
           headers: { ...headers, "Content-Type": "application/json; charset=utf-8" },
+        });
+      }
+      if (url.pathname === "/gemini/overview" && request.method === "POST") {
+        let body;
+        try { body = await request.json(); } catch (_) { body = {}; }
+        const result = await generateWeatherOverview(body.context || {}, env, body.apiKey);
+        return new Response(JSON.stringify(result), {
+          status: result.ok ? 200 : (result.status || 400),
+          headers: { ...headers, "Content-Type": "application/json" }
+        });
+      }
+      if (url.pathname === "/gemini/chat" && request.method === "POST") {
+        let body;
+        try { body = await request.json(); } catch (_) { body = {}; }
+        const result = await chatWithGemini(body.question || "", body.context || {}, env, body.apiKey);
+        return new Response(JSON.stringify(result), {
+          status: result.ok ? 200 : (result.status || 400),
+          headers: { ...headers, "Content-Type": "application/json" }
         });
       }
       if (url.pathname === "/push/subscribe" && request.method === "POST") return await pushSettings(request, env, false);
