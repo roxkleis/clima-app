@@ -829,6 +829,12 @@ const GEMINI_WORKER = new URL(MODELS.smn.endpoint).origin;
 const WEATHER_CONTEXT_MAX_AGE = 30 * 60000;
 let weatherRequestId=0;
 let latestWeather=null;
+let weatherStatus={state:'loading'};
+
+function publishWeatherStatus(status){
+  weatherStatus=status;
+  window.dispatchEvent(new CustomEvent('clima:weather',{detail:status}));
+}
 
 function weatherMetric(value){
   return Number.isFinite(value) ? Math.round(value*10)/10 : '—';
@@ -908,15 +914,21 @@ function geminiWeatherContext({models,position,location,observation,loadedAt}, i
   };
 }
 
-async function requestGeminiWeather(route,accessToken,question){
+async function requestGeminiWeather(route,accessToken,question,history){
   const snapshot=latestWeather;
   if(!snapshot || Date.now()-snapshot.loadedAt>WEATHER_CONTEXT_MAX_AGE){
+    return {ok:false,error:'WEATHER_UNAVAILABLE',message:'Actualizá el pronóstico para consultar a Gemini.'};
+  }
+  let context;
+  try{
+    context=geminiWeatherContext(snapshot,route==='chat');
+  }catch{
     return {ok:false,error:'WEATHER_UNAVAILABLE',message:'Actualizá el pronóstico para consultar a Gemini.'};
   }
   const result=await fetch(GEMINI_WORKER+'/gemini/'+route,{
     method:'POST',cache:'no-store',signal:AbortSignal.timeout(18000),
     headers:{'Content-Type':'application/json',Authorization:'Bearer '+accessToken},
-    body:JSON.stringify({context:geminiWeatherContext(snapshot,route==='chat'),question}),
+    body:JSON.stringify({context,question,history}),
   }).then(response=>response.json()).catch(()=>({
     ok:false,error:'GEMINI_UNAVAILABLE',message:'Gemini no está disponible en este momento.',
   }));
@@ -924,13 +936,16 @@ async function requestGeminiWeather(route,accessToken,question){
 }
 
 window.climaGemini={
+  weather:()=>weatherStatus,
+  alerts:(lat,lon)=>fetchJsonWithTimeout(GEMINI_WORKER+'/alerts/smn?'+new URLSearchParams({lat,lon})),
   overview:token=>requestGeminiWeather('overview',token),
-  chat:(token,question)=>requestGeminiWeather('chat',token,question),
+  chat:(token,question,history)=>requestGeminiWeather('chat',token,question,history),
 };
 
 async function loadWeather(){
   const requestId=++weatherRequestId;
   latestWeather=null;
+  publishWeatherStatus({state:'loading'});
   const place=selectedLocation;
   els.status.textContent='BUSCANDO';
   els.rainOutlook.textContent='Consultando próxima lluvia…';
@@ -941,7 +956,10 @@ async function loadWeather(){
   try{
     position=place ? {coords:{latitude:place.latitude,longitude:place.longitude,accuracy:null}} : await getBestPosition();
   }catch(error){
-    if(requestId===weatherRequestId) showGpsError(error);
+    if(requestId===weatherRequestId){
+      showGpsError(error);
+      publishWeatherStatus({state:'unavailable'});
+    }
     return;
   }
   if(requestId!==weatherRequestId) return;
@@ -963,10 +981,12 @@ async function loadWeather(){
     els.rainOutlook.textContent='Pronóstico de lluvia no disponible';
     els.updated.textContent='No se pudo actualizar el pronóstico.';
     setMessage('Ningún modelo respondió. Revisá la conexión e intentá nuevamente.');
+    publishWeatherStatus({state:'unavailable'});
     return;
   }
   renderMain(models,position,location?.name,observation);
   latestWeather={models,position,location:location?.name || 'Mi ubicación',observation,loadedAt:Date.now()};
+  publishWeatherStatus({state:'ready',location:latestWeather.location,lat,lon});
 }
 
 els.retry.addEventListener('click',loadWeather);
@@ -984,7 +1004,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=26').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=27').catch(err => console.warn('SW:', err));
   });
 }
 

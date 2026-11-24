@@ -90,13 +90,17 @@ export async function handleGeminiRequest(request, env, headers, route) {
   const parsed = await readGeminiBody(request);
   if (parsed.error) return errorResponse(parsed.status, parsed.error);
 
-  const { context, question } = parsed.body ?? {};
+  const { context, question, history = [] } = parsed.body ?? {};
   if (!validWeatherContext(context)) return errorResponse(400, "INVALID_WEATHER_CONTEXT");
 
   const isChat = route === "/gemini/chat";
   if (isChat && (typeof question !== "string" || !question.trim() || question.length > maxQuestionLength)) {
     return errorResponse(400, "INVALID_QUESTION");
   }
+  if (isChat && (!Array.isArray(history) || history.length > 2 || history.some(turn =>
+    typeof turn?.question !== "string" || !turn.question.trim() || turn.question.length > maxQuestionLength ||
+    typeof turn?.text !== "string" || !turn.text.trim() || turn.text.length > 1400
+  ))) return errorResponse(400, "INVALID_HISTORY");
 
   const officialAlerts = await readAlertsAtLocation(env.DB, context.lat, context.lon);
   const weatherContext = {
@@ -106,7 +110,7 @@ export async function handleGeminiRequest(request, env, headers, route) {
     alertsRevision: JSON.stringify([officialAlerts.status, officialAlerts.alerts]),
   };
   const result = isChat
-    ? await chatWithGemini(question.trim(), weatherContext, env)
+    ? await chatWithGemini(question.trim(), weatherContext, env, history)
     : await generateWeatherOverview(weatherContext, env);
   return Response.json({ ...result, officialAlerts }, { status: result.ok ? 200 : result.status, headers });
 }

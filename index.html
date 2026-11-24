@@ -9,8 +9,9 @@
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="manifest" href="manifest.json?v=3">
-  <link rel="stylesheet" href="styles.css?v=11">
+  <link rel="stylesheet" href="styles.css?v=12">
   <link rel="stylesheet" href="observation-ui.css?v=1">
+  <link rel="stylesheet" href="gemini-ui.css?v=1">
   <title>Clima by richardspulgar</title>
 </head>
 <body>
@@ -55,6 +56,28 @@
       <div class="rain-outlook" id="rainOutlook" role="status">Consultando próxima lluvia…</div>
       <div class="observation" id="observation" hidden></div>
     </div>
+    <div class="gemini-overview" aria-labelledby="geminiHeading">
+      <div class="gemini-overview-head">
+        <h2 id="geminiHeading">Parte meteorológico</h2>
+        <button id="geminiAccess" class="gemini-text-button" type="button">Activar Gemini</button>
+      </div>
+      <p id="geminiSummary" hidden></p>
+      <p id="geminiStatus" class="gemini-muted" role="status"></p>
+      <button id="geminiRetry" class="gemini-text-button" type="button" hidden>Volver a consultar</button>
+    </div>
+  </section>
+
+  <section class="card gemini-card smn-alerts" aria-labelledby="smnAlertsTitle">
+    <div class="gemini-card-head">
+      <h2 id="smnAlertsTitle">Alertas oficiales del SMN</h2>
+      <a href="https://www.smn.gob.ar/alertas" target="_blank" rel="noopener">Ver en el SMN ↗</a>
+    </div>
+    <p id="smnAlertsStatus" class="gemini-muted" role="status">Consultando alertas para tu ubicación…</p>
+    <div id="smnAlertsList"></div>
+    <div id="smnGeminiSummary" class="smn-summary" hidden>
+      <h3>Resumen de Gemini</h3>
+      <p></p>
+    </div>
   </section>
 
   <section class="metrics">
@@ -79,6 +102,10 @@
       </div>
       <button id="closeDetails" class="close" type="button" aria-label="Cerrar comparación">×</button>
     </div>
+    <div id="geminiDiscrepancies" class="gemini-model-note" hidden>
+      <h3>Cómo leer las diferencias</h3>
+      <p></p>
+    </div>
     <div id="modelCards" class="model-cards"></div>
     <div class="details-note">
       La temperatura principal corresponde a la observación de la estación SMN más cercana cuando existe un dato reciente.
@@ -92,6 +119,15 @@
       <span>6 horas</span>
     </div>
     <div id="hourly" class="hourly"></div>
+  </section>
+
+  <section id="geminiLifestyle" class="card gemini-card" aria-labelledby="geminiLifestyleTitle" hidden>
+    <div class="gemini-card-head"><h2 id="geminiLifestyleTitle">Para organizar tu día</h2></div>
+    <dl class="gemini-tips">
+      <div><dt>Qué ponerte</dt><dd id="geminiOutfit"></dd></div>
+      <div><dt>Al aire libre</dt><dd id="geminiOutdoor"></dd></div>
+      <div><dt>Secar ropa</dt><dd id="geminiLaundry"></dd></div>
+    </dl>
   </section>
 
   <section class="section">
@@ -141,7 +177,44 @@
   <section id="message" class="message" role="status">Obteniendo ubicación…</section>
   <p class="icon-credit">Íconos meteorológicos de <a href="https://developers.google.com/maps/documentation/weather/weather-condition-icons?hl=es-419">Google Maps</a>.</p>
 </main>
-<script src="app.js?v=26"></script>
+
+<button id="geminiOpenChat" class="gemini-fab" type="button" aria-haspopup="dialog">Preguntale al clima</button>
+
+<dialog id="geminiAccessDialog" class="gemini-dialog" aria-labelledby="geminiAccessTitle">
+  <form id="geminiAccessForm">
+    <div class="gemini-dialog-head">
+      <h2 id="geminiAccessTitle">Acceso a Gemini</h2>
+      <button class="close" type="button" data-gemini-close aria-label="Cerrar acceso">×</button>
+    </div>
+    <label for="geminiToken">Código de acceso de la app</label>
+    <input id="geminiToken" type="password" autocomplete="off" required minlength="32" maxlength="128" pattern="[A-Za-z0-9_\-]{32,128}" autofocus>
+    <p id="geminiAccessStatus" class="gemini-muted" role="status"></p>
+    <button class="gemini-button" type="submit">Activar</button>
+  </form>
+</dialog>
+
+<dialog id="geminiChatDialog" class="gemini-dialog gemini-chat" aria-labelledby="geminiChatTitle">
+  <div class="gemini-dialog-head">
+    <div>
+      <h2 id="geminiChatTitle">Preguntale al clima</h2>
+      <p id="geminiChatLocation" class="gemini-muted"></p>
+    </div>
+    <button class="close" type="button" data-gemini-close aria-label="Cerrar chat">×</button>
+  </div>
+  <ol id="geminiMessages" class="gemini-messages" aria-label="Conversación" role="log" aria-live="polite"></ol>
+  <form id="geminiChatForm">
+    <label for="geminiQuestion">Tu pregunta</label>
+    <textarea id="geminiQuestion" rows="2" required maxlength="500" placeholder="¿A qué hora puede llover?" autofocus></textarea>
+    <div class="gemini-chat-actions">
+      <button id="geminiDictate" class="gemini-button secondary" type="button" aria-pressed="false" hidden>Dictar</button>
+      <button class="gemini-button" type="submit">Preguntar</button>
+    </div>
+    <p id="geminiChatStatus" class="gemini-muted" role="status"></p>
+  </form>
+</dialog>
+
+<script src="app.js?v=27"></script>
 <script src="observation-ui.js?v=1"></script>
+<script src="gemini-ui.js?v=1"></script>
 </body>
 </html>

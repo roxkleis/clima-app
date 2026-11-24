@@ -2,7 +2,7 @@ import { reserveGeminiRequest, useGeminiCache } from "./gemini-storage.js";
 
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
 
-async function callGeminiRaw(prompt, systemInstruction, env, { asJson = false, channel = "interactive" } = {}) {
+async function callGeminiRaw(prompt, systemInstruction, env, { asJson = false, channel = "interactive", history = [] } = {}) {
   const apiKey = env?.GEMINI_API_KEY;
   if (!apiKey) {
     return { ok: false, status: 503, error: "NO_API_KEY", message: "Gemini todavía no está configurado." };
@@ -19,6 +19,10 @@ async function callGeminiRaw(prompt, systemInstruction, env, { asJson = false, c
 
   const payload = {
     contents: [
+      ...history.flatMap(turn => [
+        { role: "user", parts: [{ text: turn.question }] },
+        { role: "model", parts: [{ text: turn.text }] },
+      ]),
       {
         role: "user",
         parts: [{ text: prompt }]
@@ -129,11 +133,12 @@ Genera un JSON con esta estructura exacta:
   });
 }
 
-export async function chatWithGemini(question, weatherContext, env) {
+export async function chatWithGemini(question, weatherContext, env, history) {
   const systemPrompt = `Eres el copiloto meteorológico de la aplicación "Clima Consenso".
 Respondes preguntas cotidianas sobre el clima de forma directa, útil, precisa y concisa (español de Argentina).
 Usa EXCLUSIVAMENTE los datos meteorológicos provistos (consenso entre SMN, ECMWF, GFS e ICON).
 Si faltan datos o hay desacuerdo, expresa la incertidumbre. Conserva los horarios, niveles y recomendaciones oficiales de las alertas.
+Si una respuesta anterior dice algo distinto, usa el pronóstico actual.
 Si te preguntan por horarios de lluvia, actividades, ropa o planes, da una respuesta clara y concreta en 1 o 2 párrafos breves.`;
 
   const prompt = `Datos meteorológicos actuales para ${weatherContext.location || "la ubicación"}:
@@ -150,7 +155,7 @@ Si te preguntan por horarios de lluvia, actividades, ropa o planes, da una respu
 
 Pregunta del usuario: "${question}"`;
 
-  return await callGeminiRaw(prompt, systemPrompt, env);
+  return await callGeminiRaw(prompt, systemPrompt, env, { history });
 }
 
 export async function rewriteSummaryNotification(body, night, eventKey, env) {
@@ -164,7 +169,8 @@ export async function rewriteSummaryNotification(body, night, eventKey, env) {
     const response = await callGeminiRaw(prompt, instructions, env, { channel: "push" });
     if (!response.ok) return response;
     const text = response.text.trim().replace(/^["']|["']$/g, "").trim();
-    return text && Array.from(text).length <= 100 && !/[\r\n]/.test(text)
+    const numbers = value => (value.replaceAll("−", "-").match(/\d{1,2}:\d{2}|-?\d+(?:[.,]\d+)?/g) ?? []).sort().join("|");
+    return text && Array.from(text).length <= 100 && !/[\r\n]/.test(text) && numbers(text) === numbers(body)
       ? { ok: true, text }
       : { ok: false };
   });

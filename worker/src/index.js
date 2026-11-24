@@ -1,6 +1,7 @@
 ﻿import { runNotificationEngine, ensureNotifyMaxTempColumn } from "./alerts.js";
 import { pushEndpoint, sendPush } from "./push.js";
 import { handleGeminiRequest } from "./gemini-http.js";
+import { readAlertsAtLocation } from "./smn-alerts.js";
 
 const HEADER_BYTES_PER_VALUE = 2;
 const VARIABLES = ["temperature", "humidity", "precipitation", "windSpeed", "windDirection"];
@@ -736,6 +737,16 @@ export default {
           });
         }
         return await handleGeminiRequest(request, env, headers, url.pathname);
+      }
+      if (url.pathname === "/alerts/smn" && request.method === "GET") {
+        const rawLat = url.searchParams.get("lat");
+        const rawLon = url.searchParams.get("lon");
+        const lat = rawLat?.trim() ? Number(rawLat) : NaN;
+        const lon = rawLon?.trim() ? Number(rawLon) : NaN;
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+          return Response.json({ error: "INVALID_COORDINATES" }, { status: 400, headers });
+        }
+        return Response.json(await readAlertsAtLocation(env.DB, lat, lon), { headers });
       }
       if (url.pathname === "/push/subscribe" && request.method === "POST") return await pushSettings(request, env, false);
       if (url.pathname === "/push/preferences" && request.method === "POST") return await pushSettings(request, env, true);

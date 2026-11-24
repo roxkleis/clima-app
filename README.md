@@ -42,3 +42,5 @@ Para actualizar una base D1 anterior que todavía no tenga la preferencia noctur
 Antes de habilitar Gemini, aplicar la migración D1 `0003_gemini_quota_cache.sql` y configurar los secretos del Worker `GEMINI_API_KEY` y `GEMINI_ACCESS_TOKEN`. El segundo debe ser un token aleatorio de al menos 32 caracteres en formato base64url. Las rutas de Gemini lo reciben mediante el encabezado HTTP `Authorization: Bearer …`.
 
 Aplicar también la migración `0004_smn_cap_index.sql` para que las rutas de Gemini consulten el índice oficial de alertas por coordenadas. El cron del Worker actualiza este índice cada cinco minutos. Durante la primera carga o ante fallas de la fuente, la respuesta distingue cobertura parcial o no disponible de una consulta completa sin alertas.
+
+En la interfaz, **Activar Gemini** solicita el código de acceso y lo recuerda durante la sesión de la pestaña. El botón **Dictar** aparece en navegadores con reconocimiento de voz y deja el texto listo para revisar antes de enviarlo.
