@@ -212,7 +212,8 @@ function currentIndex(data,targetIso=null){
   const target = targetIso ? new Date(targetIso).getTime() : Date.now();
   let idx=0,best=Infinity;
   data.hourly.time.forEach((t,i)=>{
-    const diff=Math.abs(new Date(t).getTime()-target);
+    const timestamp=Date.parse(t+'Z')-(data.utc_offset_seconds ?? 0)*1000;
+    const diff=Math.abs(timestamp-target);
     if(diff<best){best=diff;idx=i;}
   });
   return idx;
@@ -246,18 +247,18 @@ function currentSnapshot(item,targetIso=null){
     const d=item.data.data[0];
     return {
       key:'smn',name:MODELS.smn.name,flag:MODELS.smn.flag,label:MODELS.smn.label,
-      time:d.validTime,temp:Number(d.temperature),apparent:apparentSMN(Number(d.temperature),Number(d.humidity),Number(d.windSpeed)),
-      humidity:Number(d.humidity),precipitation:Number(d.precipitation??0),probability:null,
-      code:null,wind:Number(d.windSpeed??0),gust:null
+      time:d.validTime,temp:d.temperature,apparent:apparentSMN(d.temperature,d.humidity,d.windSpeed),
+      humidity:d.humidity,precipitation:d.lead > 0 ? d.precipitation : null,probability:null,
+      code:null,wind:Number.isFinite(d.windSpeed) ? d.windSpeed*3.6 : null,gust:null
     };
   }
   const h=item.data.hourly, i=currentIndex(item.data,targetIso);
   return {
     key:item.key,name:MODELS[item.key].name,flag:MODELS[item.key].flag,label:MODELS[item.key].label,
-    time:h.time[i],temp:Number(h.temperature_2m[i]),apparent:Number(h.apparent_temperature[i]),
-    humidity:Number(h.relative_humidity_2m[i]),precipitation:Number(h.precipitation[i]??0),
-    probability:h.precipitation_probability ? Number(h.precipitation_probability[i]) : null,
-    code:Number(h.weather_code[i]),wind:Number(h.wind_speed_10m?.[i]??0),gust:Number(h.wind_gusts_10m?.[i]??0)
+    time:h.time[i],temp:h.temperature_2m?.[i],apparent:h.apparent_temperature?.[i],
+    humidity:h.relative_humidity_2m?.[i],precipitation:h.precipitation?.[i],
+    probability:h.precipitation_probability?.[i],
+    code:h.weather_code?.[i],wind:h.wind_speed_10m?.[i],gust:h.wind_gusts_10m?.[i]
   };
 }
 
@@ -542,18 +543,25 @@ function renderMain(items,position,placeName=null,observation=null){
     : 'SMN, ECMWF, GFS e ICON conectados correctamente.');
 }
 
-function hourlyForecast(items, now = Date.now()){
-  const series = items.map(({key,data}) => {
+function forecastHourSeries(items){
+  return items.map(({key,data}) => {
     if(key === 'smn'){
       return new Map(data.data.map(point => [Date.parse(point.validTime), {
-        key, temp:point.temperature, precip:point.precipitation, code:null
+        key, temp:point.temperature, precip:point.lead > 0 ? point.precipitation : null, code:null,
+        wind:Number.isFinite(point.windSpeed) ? point.windSpeed*3.6 : null
       }]));
     }
     const h = data.hourly;
     return new Map(h.time.map((time,i) => [Date.parse(time + 'Z') - data.utc_offset_seconds * 1000, {
-      key, temp:h.temperature_2m[i], precip:h.precipitation?.[i], code:h.weather_code?.[i]
+      key, temp:h.temperature_2m?.[i], precip:h.precipitation?.[i], code:h.weather_code?.[i],
+      wind:h.wind_speed_10m?.[i], gust:h.wind_gusts_10m?.[i], humidity:h.relative_humidity_2m?.[i],
+      probability:h.precipitation_probability?.[i]
     }]));
   });
+}
+
+function hourlyForecast(items, now = Date.now()){
+  const series = forecastHourSeries(items);
   const anchor = series.flatMap(model => [...model.keys()]).find(Number.isFinite);
   if(anchor === undefined) return [];
   const start = anchor + Math.round((now - anchor) / RAIN_HOUR) * RAIN_HOUR;
@@ -657,14 +665,11 @@ function smnDailyMap(smn,timezone){
   return result;
 }
 
-function renderDaily(items,lat=null,lon=null){
+function dailyForecast(items, completeSmnDaysOnly=false){
   const openItems=items.filter(x=>x.key!=='smn' && x.data.daily?.time?.length);
   const base=openItems[0]?.data.daily;
   const smn=items.find(x=>x.key==='smn');
-  els.daily.replaceChildren();
-  els.todayMax.textContent='—';
-  els.todayMin.textContent='—';
-  if(!base) return;
+  if(!base) return [];
   const smnDays=smnDailyMap(smn,openItems[0].data.timezone || 'UTC');
 
   const daysData=[];
@@ -686,7 +691,7 @@ function renderDaily(items,lat=null,lon=null){
 
     const smnDay=smnDays.get(dayKey);
     // Los extremos de hoy necesitan el día completo, no solo las horas restantes del WRF.
-    const hasSmn=smnDay?.temps.length >= (i===0 ? 24 : 1);
+    const hasSmn=smnDay?.temps.length >= (i===0 || completeSmnDaysOnly ? 24 : 1);
     if(hasSmn){
       max.push(Math.max(...smnDay.temps));
       min.push(Math.min(...smnDay.temps));
@@ -699,33 +704,33 @@ function renderDaily(items,lat=null,lon=null){
     const minConsensus=consensusFor(min.map((temp,idx)=>({key:String(idx),name:String(idx),temp})));
     const consensusMax=maxConsensus.temp;
     const consensusMin=minConsensus.temp;
-    if(i===0){
-      els.todayMax.textContent=formatTemperature(consensusMax);
-      els.todayMin.textContent=formatTemperature(consensusMin);
-    }
     const code=codes.length ? codes[Math.floor(codes.length/2)] : 0;
     const [ico,desc]=weatherInfo(code);
     const modelCount=openItems.length + Number(hasSmn);
 
-    let dayPrecip = 0;
-    if(precips.length){
-      const validPrecips = precips.filter(p => Number.isFinite(p) && p >= 0);
-      if(validPrecips.length){
-        dayPrecip = median(validPrecips) ?? 0;
-      }
-    }
+    const forecastPrecip = median(precips.filter(p => Number.isFinite(p) && p >= 0));
 
     daysData.push({
       index: i,
       dayKey,
       max: consensusMax,
       min: consensusMin,
-      precip: dayPrecip,
+      precip: forecastPrecip ?? 0,
+      forecastPrecip,
       ico,
       desc,
       modelCount
     });
   }
+  return daysData;
+}
+
+function renderDaily(items,lat=null,lon=null){
+  const daysData=dailyForecast(items);
+  els.daily.replaceChildren();
+  els.todayMax.textContent=formatTemperature(daysData[0]?.max);
+  els.todayMin.textContent=formatTemperature(daysData[0]?.min);
+  if(!daysData.length) return;
 
   const validMaxes = daysData.map(d => d.max).filter(Number.isFinite);
   const validMins = daysData.map(d => d.min).filter(Number.isFinite);
@@ -820,9 +825,112 @@ async function getBestPosition(){
   }
 }
 
+const GEMINI_WORKER = new URL(MODELS.smn.endpoint).origin;
+const WEATHER_CONTEXT_MAX_AGE = 30 * 60000;
 let weatherRequestId=0;
+let latestWeather=null;
+
+function weatherMetric(value){
+  return Number.isFinite(value) ? Math.round(value*10)/10 : '—';
+}
+
+function geminiWeatherContext({models,position,location,observation,loadedAt}, includeExtendedHours){
+  const {latitude,longitude}=position.coords;
+  const smn=models.find(model=>model.key==='smn');
+  const timeZone=models.find(model=>model.data.timezone)?.data.timezone || 'America/Argentina/Buenos_Aires';
+  const dateFormat=new Intl.DateTimeFormat('sv-SE',{timeZone,dateStyle:'short'});
+  const clock=new Intl.DateTimeFormat('es-AR',{timeZone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+  const timestamp=time=>`${dateFormat.format(time)} ${clock.format(time)}`;
+  const now=Date.now();
+  const dateHour=timestamp(now).replace(/:\d{2}$/,'') + ':00 ' + timeZone;
+  const smnTime=Date.parse(smn?.data.data[0]?.validTime);
+  const recentSmn=Math.abs(smnTime-now)<=90*60000;
+  const targetIso=new Date(recentSmn ? smnTime : now).toISOString();
+  const snapshots=models.filter(model=>model.key!=='smn' || recentSmn).map(model=>currentSnapshot(model,targetIso));
+  const consensus=consensusFor(snapshots);
+  const observed=Number.isFinite(observation?.temp) && Date.parse(observation.time) <= now &&
+    now-Date.parse(observation.time) <= 90*60000;
+  const station=observation?.station;
+  const condition=observationWeatherInfo(observed ? observation : null,latitude,longitude)?.[1] ??
+    (snapshots.some(model=>Number.isFinite(model.code))
+      ? weatherInfoAtTime(consensusWeatherCode(snapshots),new Date(targetIso),latitude,longitude)[1] : null);
+  const modelsDetail=Object.entries(MODELS).map(([key,model])=>{
+    const current=snapshots.find(snapshot=>snapshot.key===key);
+    if(!current) return `${model.name}: sin datos.`;
+    const time=key==='smn' ? timestamp(Date.parse(current.time)) : current.time.replace('T',' ');
+    return `${model.name} (${time}): temp ${weatherMetric(current.temp)} °C, sensación ${weatherMetric(current.apparent)} °C, humedad ${weatherMetric(current.humidity)} %, precip ${weatherMetric(current.precipitation)} mm, viento ${weatherMetric(current.wind)} km/h, ráfagas ${weatherMetric(current.gust)} km/h, prob. precip. ${weatherMetric(current.probability)} %.`;
+  });
+  if(consensus.total){
+    const groups=consensus.groups.map(group=>group.map(model=>model.name).join('+')).join(' / ');
+    modelsDetail.push(`Consenso térmico ${consensus.count}/${consensus.total}; grupos: ${groups}; dispersión ${consensus.overallRange} °C.`);
+  }
+
+  const series=forecastHourSeries(models);
+  const horizon=includeExtendedHours ? 7*24 : 24;
+  const periodEnd=Math.floor(loadedAt/RAIN_HOUR)*RAIN_HOUR + horizon*RAIN_HOUR;
+  const times=[...new Set(series.flatMap(model=>[...model.keys()]))]
+    .filter(time=>time>now && time<=periodEnd).sort((a,b)=>a-b);
+  const hourly=times.map(time=>{
+    const points=series.map(model=>model.get(time)).filter(Boolean);
+    const metric=field=>weatherMetric(median(points.map(point=>point[field]).filter(Number.isFinite)));
+    const wet=points.filter(point=>rainVote(point.precip,point.code,point.temp,point.key==='smn')===true);
+    const dry=points.filter(point=>rainVote(point.precip,point.code,point.temp,point.key==='smn')===false);
+    const withRain=wet.map(point=>MODELS[point.key].name).join('+') || '—';
+    const withoutRain=dry.map(point=>MODELS[point.key].name).join('+') || '—';
+    if(time-now>24*RAIN_HOUR){
+      return `${timestamp(time)} | ${metric('temp')} | ${metric('precip')} | ${metric('wind')} | ${metric('gust')} | ${withRain} | ${withoutRain}`;
+    }
+    const amounts=points.filter(point=>Number.isFinite(point.precip))
+      .map(point=>MODELS[point.key].name+' '+weatherMetric(point.precip)).join(', ');
+    return `${timestamp(time)} | ${metric('temp')} | ${metric('precip')} | ${metric('wind')} | ${metric('gust')} | ${withRain} | ${withoutRain} | ${metric('humidity')} | ${amounts || '—'}`;
+  });
+  const days=dailyForecast(models,true).map(day=>
+    `${day.dayKey}: mín. ${weatherMetric(day.min)} °C, máx. ${weatherMetric(day.max)} °C, precip. ${weatherMetric(day.forecastPrecip)} mm, ${day.desc} (${day.modelCount} modelos).`
+  );
+  return {
+    location,lat:latitude,lon:longitude,dateHour,condition,
+    temp:observed ? observation.temp : consensus.temp,
+    apparent:observed ? apparentSMN(observation.temp,observation.humidity,observation.windSpeed) : consensus.apparent,
+    humidity:observed && Number.isFinite(observation.humidity) ? observation.humidity : consensus.humidity,
+    precip:consensus.main.some(model=>Number.isFinite(model.precipitation)) ? consensus.precipitation : null,
+    observationDetail:observed
+      ? `Estación SMN ${station?.name || ''} a las ${timestamp(Date.parse(observation.time))}; viento observado ${weatherMetric(Number.isFinite(observation.windSpeed) ? observation.windSpeed*3.6 : null)} km/h. ${Number.isFinite(observation.humidity) ? 'Humedad observada.' : 'La humedad se estima con los modelos.'}`
+      : 'Estimación por consenso de modelos. Sin observación SMN reciente.',
+    modelsDetail:modelsDetail.join('\n'),
+    hourlySummary:hourly.length ? [
+      'Hora local | temp °C | precip mm | viento km/h | ráfagas km/h | modelos con lluvia | modelos sin lluvia | humedad % (primer día) | mm por modelo (primer día).',
+      'Cada precipitación corresponde a la hora que termina en ese horario; — indica sin dato o sin voto, nunca cero.',
+      ...hourly,
+    ].join('\n') : null,
+    dailySummary:days.join('\n') || null,
+    rainOutlook:rainOutlook(models,now),
+    forecastRevision:smn?.data.cycle ?? null,
+  };
+}
+
+async function requestGeminiWeather(route,accessToken,question){
+  const snapshot=latestWeather;
+  if(!snapshot || Date.now()-snapshot.loadedAt>WEATHER_CONTEXT_MAX_AGE){
+    return {ok:false,error:'WEATHER_UNAVAILABLE',message:'Actualizá el pronóstico para consultar a Gemini.'};
+  }
+  const result=await fetch(GEMINI_WORKER+'/gemini/'+route,{
+    method:'POST',cache:'no-store',signal:AbortSignal.timeout(18000),
+    headers:{'Content-Type':'application/json',Authorization:'Bearer '+accessToken},
+    body:JSON.stringify({context:geminiWeatherContext(snapshot,route==='chat'),question}),
+  }).then(response=>response.json()).catch(()=>({
+    ok:false,error:'GEMINI_UNAVAILABLE',message:'Gemini no está disponible en este momento.',
+  }));
+  return snapshot===latestWeather ? result : {ok:false,error:'WEATHER_CHANGED'};
+}
+
+window.climaGemini={
+  overview:token=>requestGeminiWeather('overview',token),
+  chat:(token,question)=>requestGeminiWeather('chat',token,question),
+};
+
 async function loadWeather(){
   const requestId=++weatherRequestId;
+  latestWeather=null;
   const place=selectedLocation;
   els.status.textContent='BUSCANDO';
   els.rainOutlook.textContent='Consultando próxima lluvia…';
@@ -858,6 +966,7 @@ async function loadWeather(){
     return;
   }
   renderMain(models,position,location?.name,observation);
+  latestWeather={models,position,location:location?.name || 'Mi ubicación',observation,loadedAt:Date.now()};
 }
 
 els.retry.addEventListener('click',loadWeather);

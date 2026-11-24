@@ -225,7 +225,6 @@ async function runStorm(env, rows, now) {
 
 async function runSmnAlerts(env, rows, now) {
   const recipients = rows.filter(row => row.alerts_smn);
-  if (!recipients.length) return;
   const alerts = await fetchRegionalAlerts(env.DB, now);
   // Hasta 17 consultas directas, 17 a la réplica y 16 envíos.
   const budget = { remaining: 16 };
@@ -353,12 +352,12 @@ export async function runNotificationEngine(env, controller) {
     ).all();
   }
   const rows = result.results ?? [];
+  if (controller.cron === ALERT_CRON) {
+    await runSmnAlerts(env, rows, now);
+    if (rows.length) await runMaxTemp(env, rows, now);
+  }
   if (rows.length) {
     if (controller.cron === SUMMARY_CRON) await runSummary(env, rows, now);
-    if (controller.cron === ALERT_CRON) {
-      await runSmnAlerts(env, rows, now);
-      await runMaxTemp(env, rows, now);
-    }
     if (controller.cron === STORM_CRON) await runStorm(env, rows, now);
   }
   return { ok: true, subscriptions: rows.length };

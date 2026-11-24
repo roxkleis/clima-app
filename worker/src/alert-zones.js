@@ -25,6 +25,14 @@ function contains([x, y], polygon) {
   return inside;
 }
 
+export function polygonContainsPoint(polygon, point) {
+  if (!within(point, bounds(polygon))) return false;
+  const [x, y] = point;
+  return contains(point, polygon) || edges(polygon).some(({ a: [ax, ay], b: [bx, by], box }) =>
+    within(point, box) && Math.abs((bx - ax) * (y - ay) - (by - ay) * (x - ax)) < 1e-10
+  );
+}
+
 function edges(points) {
   return points.map((a, i) => {
     const b = points[(i + 1) % points.length];

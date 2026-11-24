@@ -76,30 +76,34 @@ export async function generateWeatherOverview(ctx, env) {
   const systemPrompt = `Eres el asistente meteorológico inteligente de la aplicación "Clima Consenso".
 Tu tono es profesional, amigable, claro y natural (español de Argentina).
 Analiza los datos reales del pronóstico y devuelve un JSON estricto con las 4 claves especificadas.
+Usa solo los datos provistos. Diferencia observación, estimación de modelos y pronóstico. Los valores ausentes o parciales son desconocidos.
+Describe el desacuerdo según la evidencia, sin asignar a un modelo mayor precisión por su resolución. Las alertas se explican con los horarios y las recomendaciones oficiales provistas.
 No uses markdown fuera del JSON. Devuelve únicamente el objeto JSON.`;
 
   const userPrompt = `Analiza estos datos meteorológicos actuales y de consenso entre modelos:
 Ubicación: ${ctx.location || "Buenos Aires"}
 Hora local: ${ctx.dateHour || ctx.localTime || "Actual"}
 Temperatura actual: ${ctx.temp != null ? ctx.temp + "°C" : "Desconocida"} (Sensación: ${ctx.apparent != null ? ctx.apparent + "°C" : "—"})
-Humedad: ${ctx.humidity != null ? ctx.humidity + "%" : "—"}, Precipitación: ${ctx.precip != null ? ctx.precip + " mm" : "0 mm"}
-Condición: ${ctx.condition || "Variable"}
+Humedad: ${ctx.humidity != null ? ctx.humidity + "%" : "—"}, Precipitación del modelo: ${ctx.precip != null ? ctx.precip + " mm" : "desconocida"}
+Condición: ${ctx.condition || "desconocida"}
+Fuente actual: ${ctx.observationDetail || "Consenso de los modelos disponibles"}
+Próxima lluvia: ${ctx.rainOutlook || "Incierta"}
 Consenso de modelos (SMN, ECMWF, GFS, ICON):
 ${ctx.modelsDetail || "No disponible"}
 Próximas horas: ${ctx.hourlySummary || "Sin datos horarios"}
 Próximos días: ${ctx.dailySummary || "Sin datos diarios"}
-Alertas activas del SMN: ${ctx.alertsDetail || "Ninguna alerta activa"}
+Alertas y cobertura del SMN: ${ctx.alertsDetail}
 
 Genera un JSON con esta estructura exacta:
 {
   "summary": "Parte meteorológico en lenguaje natural (2 a 3 oraciones concisas y útiles). Destaca cómo se siente el día y qué esperar.",
-  "discrepancies": "Explicación breve del consenso entre SMN, ECMWF, GFS e ICON. Si coinciden, menciónalo; si discrepan (ej. lluvia o temperatura), explica qué modelo prevé qué y cuál es más confiable.",
+  "discrepancies": "Explica qué prevé cada modelo cuando hay diferencias. Indica el grado de acuerdo y los modelos que no disponen de datos.",
   "lifestyle": {
     "outfit": "Recomendación práctica de ropa para el día y la noche.",
     "outdoor": "Mejor franja horaria para pasear, correr o actividad al aire libre.",
     "laundry": "Recomendación para secar/colgar ropa (viento, humedad, riesgo de lluvia)."
   },
-  "alertsSummary": ${ctx.alertsDetail && ctx.alertsDetail !== "Ninguna alerta activa" ? '"Resumen claro de la alerta: qué fenómeno esperar, franja horaria crítica y medidas preventivas."' : 'null'}
+  "alertsSummary": ${["active", "partial"].includes(ctx.alertsStatus) ? '"Resume el fenómeno, zona, vigencia e instrucciones oficiales disponibles."' : 'null'}
 }`;
 
   const cacheParts = [
@@ -115,6 +119,7 @@ Genera un JSON con esta estructura exacta:
         data?.lifestyle?.outdoor, data?.lifestyle?.laundry];
       if (fields.every((field) => typeof field === "string" && field.trim()) &&
         (data.alertsSummary === null || typeof data.alertsSummary === "string")) {
+        if (!["active", "partial"].includes(ctx.alertsStatus)) data.alertsSummary = null;
         return { ok: true, data };
       }
     } catch {
@@ -128,16 +133,20 @@ export async function chatWithGemini(question, weatherContext, env) {
   const systemPrompt = `Eres el copiloto meteorológico de la aplicación "Clima Consenso".
 Respondes preguntas cotidianas sobre el clima de forma directa, útil, precisa y concisa (español de Argentina).
 Usa EXCLUSIVAMENTE los datos meteorológicos provistos (consenso entre SMN, ECMWF, GFS e ICON).
+Si faltan datos o hay desacuerdo, expresa la incertidumbre. Conserva los horarios, niveles y recomendaciones oficiales de las alertas.
 Si te preguntan por horarios de lluvia, actividades, ropa o planes, da una respuesta clara y concreta en 1 o 2 párrafos breves.`;
 
   const prompt = `Datos meteorológicos actuales para ${weatherContext.location || "la ubicación"}:
-- Temperatura: ${weatherContext.temp}°C (Sensación: ${weatherContext.apparent}°C)
-- Condición: ${weatherContext.condition}
-- Humedad: ${weatherContext.humidity}%, Lluvia actual: ${weatherContext.precip} mm
+- Hora local: ${weatherContext.dateHour || weatherContext.localTime}
+- Temperatura en °C: ${weatherContext.temp ?? "desconocida"} (sensación: ${weatherContext.apparent ?? "desconocida"})
+- Fuente: ${weatherContext.observationDetail || "Consenso de los modelos disponibles"}
+- Condición: ${weatherContext.condition || "desconocida"}
+- Humedad en %: ${weatherContext.humidity ?? "desconocida"}, precipitación estimada en mm: ${weatherContext.precip ?? "desconocida"}
+- Modelos: ${weatherContext.modelsDetail || "Sin detalle"}
 - Pronóstico lluvia 24h: ${weatherContext.rainOutlook || "Incierto"}
 - Próximas horas: ${weatherContext.hourlySummary || ""}
 - Próximos 7 días: ${weatherContext.dailySummary || ""}
-- Alertas SMN: ${weatherContext.alertsDetail || "Sin alertas"}
+- Alertas y cobertura del SMN: ${weatherContext.alertsDetail}
 
 Pregunta del usuario: "${question}"`;
 
@@ -149,7 +158,7 @@ export async function rewriteSummaryNotification(body, night, eventKey, env) {
 
   const period = night ? "la madrugada" : "el resumen del día";
   const prompt = `Crea una notificación push ultra concisa (máximo 100 caracteres) en tono amigable argentino para ${period}: ${body}. Solo el texto de la notificación sin comillas.`;
-  const instructions = "Sé conciso, natural, sin emojis repetidos, máximo 100 caracteres.";
+  const instructions = "Conserva los valores, el lugar y la vigencia del pronóstico provisto. No agregues fenómenos ni condiciones. Escribe una sola línea de hasta 100 caracteres.";
   const cacheParts = ["push", GEMINI_API_URL, eventKey, instructions, prompt];
   const result = await useGeminiCache(env.DB, cacheParts, async () => {
     const response = await callGeminiRaw(prompt, instructions, env, { channel: "push" });
