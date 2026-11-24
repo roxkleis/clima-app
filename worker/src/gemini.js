@@ -1,8 +1,11 @@
 import { reserveGeminiRequest, useGeminiCache } from "./gemini-storage.js";
 
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent";
+const GEMINI_ALTERNATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
 
-async function callGeminiRaw(prompt, systemInstruction, env, { asJson = false, channel = "interactive", history = [] } = {}) {
+async function callGeminiRaw(prompt, systemInstruction, env, {
+  asJson = false, channel = "interactive", history = [], url = GEMINI_API_URL,
+} = {}) {
   const apiKey = env?.GEMINI_API_KEY?.trim();
   if (!apiKey) {
     return { ok: false, status: 503, error: "NO_API_KEY", message: "Gemini todavía no está configurado." };
@@ -42,7 +45,7 @@ async function callGeminiRaw(prompt, systemInstruction, env, { asJson = false, c
   }
 
   try {
-    const response = await fetch(GEMINI_API_URL, {
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -55,6 +58,11 @@ async function callGeminiRaw(prompt, systemInstruction, env, { asJson = false, c
 
     if (!response.ok) {
       console.warn("gemini-upstream-status", response.status);
+      if (url === GEMINI_API_URL && [404, 503].includes(response.status)) {
+        return await callGeminiRaw(prompt, systemInstruction, env, {
+          asJson, channel, history, url: GEMINI_ALTERNATE_URL,
+        });
+      }
       return {
         ok: false,
         error: "GEMINI_ERROR",
