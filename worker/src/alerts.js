@@ -1,4 +1,4 @@
-import { sendPush } from "./push.js";
+﻿import { sendPush } from "./push.js";
 
 import { fetchRegionalAlerts, alertPayload } from "./smn-alerts.js";
 
@@ -236,16 +236,123 @@ async function runSmnAlerts(env, rows, now) {
   }
 }
 
+async function runMaxTemp(env, rows, now) {
+  const recipients = rows.filter(row => row.notify_max_temp !== 0 && row.notify_max_temp !== false);
+  if (!recipients.length) return;
+
+  const byLocation = new Map();
+  for (const row of recipients) {
+    const tz = row.timezone || TIMEZONE;
+    const local = localParts(now, tz);
+    if (local.hour < 11 || local.hour >= 20) continue;
+
+    const eventKey = `max-temp:${local.date}`;
+    if (await alreadyDelivered(env, eventKey, row.endpoint)) continue;
+
+    const lat = Number(row.lat != null && Number.isFinite(Number(row.lat)) ? row.lat : -34.543);
+    const lon = Number(row.lon != null && Number.isFinite(Number(row.lon)) ? row.lon : -58.713);
+    const locKey = `${lat.toFixed(2)},${lon.toFixed(2)}:${tz}`;
+
+    if (!byLocation.has(locKey)) {
+      byLocation.set(locKey, { lat, lon, tz, local, eventKey, rows: [] });
+    }
+    byLocation.get(locKey).rows.push(row);
+  }
+
+  if (!byLocation.size) return;
+
+  for (const { lat, lon, tz, local, eventKey, rows: locRows } of byLocation.values()) {
+    try {
+      const url = new URL("https://api.open-meteo.com/v1/forecast");
+      url.search = new URLSearchParams({
+        latitude: String(lat),
+        longitude: String(lon),
+        timezone: tz,
+        forecast_days: "1",
+        current: "temperature_2m",
+        hourly: "temperature_2m",
+        daily: "temperature_2m_max"
+      });
+
+      const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!response.ok) continue;
+      const data = await response.json();
+
+      const expectedMax = data.daily?.temperature_2m_max?.[0];
+      const currentTemp = data.current?.temperature_2m;
+      const hourlyTemps = (data.hourly?.temperature_2m || []).filter(Number.isFinite);
+      const hourlyTimes = data.hourly?.time || [];
+
+      if (!Number.isFinite(currentTemp) || !hourlyTemps.length) continue;
+
+      const dailyPeak = Number.isFinite(expectedMax) ? expectedMax : Math.max(...hourlyTemps);
+
+      const nextHourStr = `${local.date}T${String(local.hour + 1).padStart(2, "0")}:00`;
+      const nextHourIdx = hourlyTimes.indexOf(nextHourStr);
+      const nextTemp = nextHourIdx >= 0 ? hourlyTemps[nextHourIdx] : null;
+
+      // Se considera alcanzada la máxima si:
+      // 1) La temperatura actual está a 0.5 °C o más de la máxima pronosticada.
+      // 2) O la temperatura empieza a descender respecto a la hora pico y está dentro de 1.2 °C del pico.
+      // 3) O a partir de las 14:30 hs está a 0.8 °C del pico diario.
+      const reachedMax = currentTemp >= (dailyPeak - 0.5);
+      const atForecastPeak = (nextTemp !== null && nextTemp <= currentTemp) && (currentTemp >= dailyPeak - 1.2);
+      const isAfternoonPeak = local.hour >= 14 && currentTemp >= (dailyPeak - 0.8);
+
+      if (reachedMax || atForecastPeak || isAfternoonPeak) {
+        const displayTemp = Math.round(Math.max(currentTemp, dailyPeak));
+        const payload = {
+          title: "🌡️ Temperatura máxima",
+          body: `Temperatura máxima (${displayTemp}°) en estos momentos.`,
+          tag: `max-temp-${local.date}`,
+          url: "./",
+          ttl: 4 * 60 * 60
+        };
+
+        for (const row of locRows) {
+          try {
+            await deliver(env, row, eventKey, payload);
+          } catch (err) {
+            console.warn("max-temp-delivery", err?.message);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("max-temp-check", err?.message);
+    }
+  }
+}
+
+export async function ensureNotifyMaxTempColumn(env) {
+  try {
+    await env.DB.prepare("ALTER TABLE push_subscriptions ADD COLUMN notify_max_temp INTEGER NOT NULL DEFAULT 1").run();
+  } catch (_) {
+    // Columna ya existente
+  }
+}
+
 export async function runNotificationEngine(env, controller) {
   const now = new Date(controller.scheduledTime);
-  const result = await env.DB.prepare(
-    "SELECT endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,night_minimum," +
-    "COALESCE(timezone,'America/Argentina/Buenos_Aires') AS timezone FROM push_subscriptions ORDER BY id LIMIT 40"
-  ).all();
+  await ensureNotifyMaxTempColumn(env);
+  let result;
+  try {
+    result = await env.DB.prepare(
+      "SELECT endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,night_minimum,COALESCE(notify_max_temp,1) AS notify_max_temp," +
+      "COALESCE(timezone,'America/Argentina/Buenos_Aires') AS timezone FROM push_subscriptions ORDER BY id LIMIT 40"
+    ).all();
+  } catch (_) {
+    result = await env.DB.prepare(
+      "SELECT endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,night_minimum,1 AS notify_max_temp," +
+      "COALESCE(timezone,'America/Argentina/Buenos_Aires') AS timezone FROM push_subscriptions ORDER BY id LIMIT 40"
+    ).all();
+  }
   const rows = result.results ?? [];
   if (rows.length) {
     if (controller.cron === SUMMARY_CRON) await runSummary(env, rows, now);
-    if (controller.cron === ALERT_CRON) await runSmnAlerts(env, rows, now);
+    if (controller.cron === ALERT_CRON) {
+      await runSmnAlerts(env, rows, now);
+      await runMaxTemp(env, rows, now);
+    }
     if (controller.cron === STORM_CRON) await runStorm(env, rows, now);
   }
   return { ok: true, subscriptions: rows.length };

@@ -1,4 +1,4 @@
-import { runNotificationEngine } from "./alerts.js";
+﻿import { runNotificationEngine, ensureNotifyMaxTempColumn } from "./alerts.js";
 import { pushEndpoint, sendPush } from "./push.js";
 
 const HEADER_BYTES_PER_VALUE = 2;
@@ -590,9 +590,17 @@ async function pushSettings(request, env, readOnly) {
     return pushResponse(request, { ok: false, error: "Invalid subscription" }, 400);
   }
   if (readOnly) {
-    const preferences = await env.DB.prepare(
-      "SELECT alerts_smn, alerts_storm, daily_summary, night_minimum FROM push_subscriptions WHERE endpoint = ? AND auth = ?"
-    ).bind(endpoint, auth).first();
+    await ensureNotifyMaxTempColumn(env);
+    let preferences;
+    try {
+      preferences = await env.DB.prepare(
+        "SELECT alerts_smn, alerts_storm, daily_summary, night_minimum, COALESCE(notify_max_temp, 1) AS notify_max_temp FROM push_subscriptions WHERE endpoint = ? AND auth = ?"
+      ).bind(endpoint, auth).first();
+    } catch (_) {
+      preferences = await env.DB.prepare(
+        "SELECT alerts_smn, alerts_storm, daily_summary, night_minimum FROM push_subscriptions WHERE endpoint = ? AND auth = ?"
+      ).bind(endpoint, auth).first();
+    }
     return pushResponse(request, { ok: true, preferences: preferences ?? null });
   }
 
@@ -605,17 +613,36 @@ async function pushSettings(request, env, readOnly) {
     return pushResponse(request, { ok: false, error: "Invalid subscription" }, 400);
   }
   const night = typeof input.night_minimum === "boolean" ? Number(input.night_minimum) : null;
-  const result = await env.DB.prepare(`INSERT INTO push_subscriptions
-    (endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,night_minimum,timezone,last_seen_at)
-    VALUES (?,?,?,?,?,?,?,?,COALESCE(?,1),?,CURRENT_TIMESTAMP)
-    ON CONFLICT(endpoint) DO UPDATE SET
-      p256dh=excluded.p256dh,auth=excluded.auth,
-      lat=COALESCE(excluded.lat,push_subscriptions.lat),lon=COALESCE(excluded.lon,push_subscriptions.lon),
-      alerts_smn=excluded.alerts_smn,alerts_storm=excluded.alerts_storm,daily_summary=excluded.daily_summary,
-      night_minimum=COALESCE(?,push_subscriptions.night_minimum),timezone=excluded.timezone,last_seen_at=CURRENT_TIMESTAMP
-    WHERE push_subscriptions.auth=excluded.auth`)
-    .bind(endpoint, p256dh, auth, lat, lon, Number(input.alerts_smn !== false), Number(input.alerts_storm !== false),
-      Number(input.daily_summary !== false), night, timezone, night).run();
+  const maxTemp = typeof input.notify_max_temp === "boolean" ? Number(input.notify_max_temp) : 1;
+  await ensureNotifyMaxTempColumn(env);
+  let result;
+  try {
+    result = await env.DB.prepare(`INSERT INTO push_subscriptions
+      (endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,night_minimum,notify_max_temp,timezone,last_seen_at)
+      VALUES (?,?,?,?,?,?,?,?,COALESCE(?,1),COALESCE(?,1),?,CURRENT_TIMESTAMP)
+      ON CONFLICT(endpoint) DO UPDATE SET
+        p256dh=excluded.p256dh,auth=excluded.auth,
+        lat=COALESCE(excluded.lat,push_subscriptions.lat),lon=COALESCE(excluded.lon,push_subscriptions.lon),
+        alerts_smn=excluded.alerts_smn,alerts_storm=excluded.alerts_storm,daily_summary=excluded.daily_summary,
+        night_minimum=COALESCE(?,push_subscriptions.night_minimum),
+        notify_max_temp=COALESCE(?,push_subscriptions.notify_max_temp),
+        timezone=excluded.timezone,last_seen_at=CURRENT_TIMESTAMP
+      WHERE push_subscriptions.auth=excluded.auth`)
+      .bind(endpoint, p256dh, auth, lat, lon, Number(input.alerts_smn !== false), Number(input.alerts_storm !== false),
+        Number(input.daily_summary !== false), night, maxTemp, timezone, night, maxTemp).run();
+  } catch (_) {
+    result = await env.DB.prepare(`INSERT INTO push_subscriptions
+      (endpoint,p256dh,auth,lat,lon,alerts_smn,alerts_storm,daily_summary,night_minimum,timezone,last_seen_at)
+      VALUES (?,?,?,?,?,?,?,?,COALESCE(?,1),?,CURRENT_TIMESTAMP)
+      ON CONFLICT(endpoint) DO UPDATE SET
+        p256dh=excluded.p256dh,auth=excluded.auth,
+        lat=COALESCE(excluded.lat,push_subscriptions.lat),lon=COALESCE(excluded.lon,push_subscriptions.lon),
+        alerts_smn=excluded.alerts_smn,alerts_storm=excluded.alerts_storm,daily_summary=excluded.daily_summary,
+        night_minimum=COALESCE(?,push_subscriptions.night_minimum),timezone=excluded.timezone,last_seen_at=CURRENT_TIMESTAMP
+      WHERE push_subscriptions.auth=excluded.auth`)
+      .bind(endpoint, p256dh, auth, lat, lon, Number(input.alerts_smn !== false), Number(input.alerts_storm !== false),
+        Number(input.daily_summary !== false), night, timezone, night).run();
+  }
   return result.meta.changes
     ? pushResponse(request, { ok: true })
     : pushResponse(request, { ok: false, error: "Invalid subscription credentials" }, 403);

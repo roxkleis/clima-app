@@ -875,7 +875,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=25').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=26').catch(err => console.warn('SW:', err));
   });
 }
 
@@ -913,7 +913,8 @@ const notificationEls = {
   smn: document.getElementById('alertsSmn'),
   storm: document.getElementById('alertsStorm'),
   daily: document.getElementById('dailySummary'),
-  night: document.getElementById('nightSummary')
+  night: document.getElementById('nightSummary'),
+  maxTemp: document.getElementById('maxTempNotification')
 };
 const PUSH_API = 'https://clima-consenso-smn.roxkleis.workers.dev';
 
@@ -969,7 +970,8 @@ const preferenceInputs = {
   alerts_smn: notificationEls.smn,
   alerts_storm: notificationEls.storm,
   daily_summary: notificationEls.daily,
-  night_minimum: notificationEls.night
+  night_minimum: notificationEls.night,
+  notify_max_temp: notificationEls.maxTemp
 };
 let activeSubscription;
 let savedPreferences;
