@@ -1,4 +1,4 @@
-// Clima by richardspulgar · consensus engine v11 · observación SMN + consenso probabilístico
+﻿// Clima by richardspulgar · consensus engine v11 · observación SMN + consenso probabilístico
 const MODELS = {
   ecmwf: {name:"ECMWF", flag:"🇪🇺", label:"IFS HRES · 9 km", endpoint:"https://api.open-meteo.com/v1/ecmwf"},
   gfs:   {name:"GFS",   flag:"🇺🇸", label:"NOAA GFS Global · ~13 km", endpoint:"https://api.open-meteo.com/v1/gfs"},
@@ -661,15 +661,17 @@ function renderDaily(items,lat=null,lon=null){
   const openItems=items.filter(x=>x.key!=='smn' && x.data.daily?.time?.length);
   const base=openItems[0]?.data.daily;
   const smn=items.find(x=>x.key==='smn');
-  els.daily.innerHTML='';
+  els.daily.replaceChildren();
   els.todayMax.textContent='—';
   els.todayMin.textContent='—';
   if(!base) return;
   const smnDays=smnDailyMap(smn,openItems[0].data.timezone || 'UTC');
 
+  const daysData=[];
+
   for(let i=0;i<Math.min(7,base.time.length);i++){
     const dayKey=base.time[i];
-    const max=[],min=[],codes=[];
+    const max=[],min=[],codes=[],precips=[];
     for(const item of openItems){
       const d=item.data.daily;
       const dayIndex=d.time.indexOf(dayKey);
@@ -677,6 +679,9 @@ function renderDaily(items,lat=null,lon=null){
       max.push(d.temperature_2m_max?.[dayIndex]);
       min.push(d.temperature_2m_min?.[dayIndex]);
       codes.push(d.weather_code?.[dayIndex]);
+      if(Number.isFinite(d.precipitation_sum?.[dayIndex])){
+        precips.push(Number(d.precipitation_sum[dayIndex]));
+      }
     }
 
     const smnDay=smnDays.get(dayKey);
@@ -685,10 +690,13 @@ function renderDaily(items,lat=null,lon=null){
     if(hasSmn){
       max.push(Math.max(...smnDay.temps));
       min.push(Math.min(...smnDay.temps));
+      if(smnDay.precips.length){
+        precips.push(smnDay.precips.reduce((a,b)=>a+b,0));
+      }
     }
 
-    const maxConsensus=consensusFor(max.map((temp,i)=>({key:String(i),name:String(i),temp})));
-    const minConsensus=consensusFor(min.map((temp,i)=>({key:String(i),name:String(i),temp})));
+    const maxConsensus=consensusFor(max.map((temp,idx)=>({key:String(idx),name:String(idx),temp})));
+    const minConsensus=consensusFor(min.map((temp,idx)=>({key:String(idx),name:String(idx),temp})));
     const consensusMax=maxConsensus.temp;
     const consensusMin=minConsensus.temp;
     if(i===0){
@@ -696,14 +704,76 @@ function renderDaily(items,lat=null,lon=null){
       els.todayMin.textContent=formatTemperature(consensusMin);
     }
     const code=codes.length ? codes[Math.floor(codes.length/2)] : 0;
-    // El resumen diario representa principalmente las horas diurnas,
-    // por eso conserva la iconografía solar de cada condición.
     const [ico,desc]=weatherInfo(code);
     const modelCount=openItems.length + Number(hasSmn);
-    const el=document.createElement('div');
-    el.className='day';
-    el.innerHTML=`<div class="name">${i===0?'Hoy':fmtDay(dayKey)}</div><img class="icon" src="${weatherIconSrc(ico)}" alt="${desc}"><div class="desc">${desc} · ${modelCount} mod.</div><div class="max">${formatTemperature(consensusMax)}</div><div class="min">${formatTemperature(consensusMin)}</div>`;
-    els.daily.appendChild(el);
+
+    let dayPrecip = 0;
+    if(precips.length){
+      const validPrecips = precips.filter(p => Number.isFinite(p) && p >= 0);
+      if(validPrecips.length){
+        dayPrecip = median(validPrecips) ?? 0;
+      }
+    }
+
+    daysData.push({
+      index: i,
+      dayKey,
+      max: consensusMax,
+      min: consensusMin,
+      precip: dayPrecip,
+      ico,
+      desc,
+      modelCount
+    });
+  }
+
+  const validMaxes = daysData.map(d => d.max).filter(Number.isFinite);
+  const validMins = daysData.map(d => d.min).filter(Number.isFinite);
+  const allMax = validMaxes.length ? Math.max(...validMaxes) : 30;
+  const allMin = validMins.length ? Math.min(...validMins) : 10;
+  const tempRange = Math.max(6, allMax - allMin);
+  const availableHeight = 78;
+  const topOffset = 26;
+
+  for(const d of daysData){
+    const yMax = Number.isFinite(d.max)
+      ? topOffset + (allMax - d.max) / tempRange * availableHeight
+      : topOffset + availableHeight / 2;
+    const yMin = Number.isFinite(d.min)
+      ? topOffset + (allMax - d.min) / tempRange * availableHeight
+      : yMax + 24;
+    const barHeight = Math.max(8, yMin - yMax);
+
+    let dayTitle = 'Hoy';
+    if(d.index > 0){
+      const raw = fmtDay(d.dayKey);
+      dayTitle = raw.charAt(0).toUpperCase() + raw.slice(1);
+      dayTitle = dayTitle.replace(/(\D+)\s+(\d+)/, '$1. $2');
+    }
+
+    const isWet = d.precip >= 0.1;
+    const precipText = isWet ? `${d.precip.toFixed(1)}mm` : '0mm';
+
+    const col = document.createElement('div');
+    col.className = d.index === 0 ? 'day-col today' : 'day-col';
+    col.setAttribute('aria-label', `${dayTitle}: Máx ${formatTemperature(d.max)}, Mín ${formatTemperature(d.min)}, ${d.desc}, precipitación ${precipText}`);
+
+    col.innerHTML = `
+      <div class="temp-track" aria-hidden="true">
+        <div class="temp-val-max" style="top:${Math.round(yMax)}px;">${formatTemperature(d.max)}</div>
+        <div class="temp-bar" style="top:${Math.round(yMax)}px; height:${Math.round(barHeight)}px;"></div>
+        <div class="temp-val-min" style="top:${Math.round(yMin)}px;">${formatTemperature(d.min)}</div>
+      </div>
+      <div class="precip-wrap">
+        ${isWet ? '<div class="precip-bar-indicator" aria-hidden="true"></div>' : ''}
+        <div class="precip ${isWet ? 'wet' : ''}">${precipText}</div>
+      </div>
+      <img class="day-icon" src="${weatherIconSrc(d.ico)}" alt="${d.desc}">
+      <div class="day-name">${dayTitle}</div>
+      <div class="day-models">${d.modelCount} mod.</div>
+    `;
+
+    els.daily.appendChild(col);
   }
 }
 
@@ -805,7 +875,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=24').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=25').catch(err => console.warn('SW:', err));
   });
 }
 
