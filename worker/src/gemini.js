@@ -1,15 +1,10 @@
-// Módulo de Inteligencia Artificial con Gemini 2.5/1.5 Flash (Nivel Gratuito)
+// Módulo de Gemini 2.5 Flash-Lite (nivel gratuito).
 // Diseñado para máximo ahorro de cuota (caching de 45 min y llamadas agrupadas).
 
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-const GEMINI_FALLBACK_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
 
-function getApiKey(env, clientKey) {
-  return env?.GEMINI_API_KEY || clientKey || null;
-}
-
-export async function callGeminiRaw(prompt, systemInstruction, env, clientKey, asJson = false) {
-  const apiKey = getApiKey(env, clientKey);
+export async function callGeminiRaw(prompt, systemInstruction, env, asJson = false) {
+  const apiKey = env?.GEMINI_API_KEY;
   if (!apiKey) {
     return { ok: false, error: "NO_API_KEY", message: "Clave de Gemini API no configurada." };
   }
@@ -34,26 +29,25 @@ export async function callGeminiRaw(prompt, systemInstruction, env, clientKey, a
     };
   }
 
-  const tryFetch = async (url) => {
-    return await fetch(`${url}?key=${encodeURIComponent(apiKey)}`, {
+  try {
+    const response = await fetch(GEMINI_API_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey
+      },
       body: JSON.stringify(payload),
+      redirect: "error",
       signal: AbortSignal.timeout(10000)
     });
-  };
-
-  try {
-    let response = await tryFetch(GEMINI_API_URL);
-    if (!response.ok && response.status === 404) {
-      // Fallback a 1.5 Flash si 2.5 aún no estuviera disponible en esa región
-      response = await tryFetch(GEMINI_FALLBACK_URL);
-    }
 
     if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      const msg = errData?.error?.message || `HTTP ${response.status}`;
-      return { ok: false, error: "GEMINI_ERROR", message: msg, status: response.status };
+      return {
+        ok: false,
+        error: "GEMINI_ERROR",
+        message: `Gemini devolvió HTTP ${response.status}.`,
+        status: response.status
+      };
     }
 
     const data = await response.json();
@@ -63,14 +57,13 @@ export async function callGeminiRaw(prompt, systemInstruction, env, clientKey, a
     }
 
     return { ok: true, text: candidate };
-  } catch (err) {
-    return { ok: false, error: "NETWORK_ERROR", message: err?.message || "Error al conectar con Gemini." };
+  } catch {
+    return { ok: false, error: "NETWORK_ERROR", message: "Error al conectar con Gemini." };
   }
 }
 
-export async function generateWeatherOverview(ctx, env, clientKey) {
-  const apiKey = getApiKey(env, clientKey);
-  if (!apiKey) {
+export async function generateWeatherOverview(ctx, env) {
+  if (!env?.GEMINI_API_KEY) {
     return { ok: false, error: "NO_API_KEY" };
   }
 
@@ -117,7 +110,7 @@ Genera un JSON con esta estructura exacta:
   "alertsSummary": ${ctx.alertsDetail && ctx.alertsDetail !== "Ninguna alerta activa" ? '"Resumen claro de la alerta: qué fenómeno esperar, franja horaria crítica y medidas preventivas."' : 'null'}
 }`;
 
-  const result = await callGeminiRaw(userPrompt, systemPrompt, env, clientKey, true);
+  const result = await callGeminiRaw(userPrompt, systemPrompt, env, true);
   if (!result.ok) return result;
 
   try {
@@ -140,9 +133,8 @@ Genera un JSON con esta estructura exacta:
   }
 }
 
-export async function chatWithGemini(question, weatherContext, env, clientKey) {
-  const apiKey = getApiKey(env, clientKey);
-  if (!apiKey) {
+export async function chatWithGemini(question, weatherContext, env) {
+  if (!env?.GEMINI_API_KEY) {
     return { ok: false, error: "NO_API_KEY", message: "Configurá una clave de Gemini para chatear." };
   }
 
@@ -162,5 +154,5 @@ Si te preguntan por horarios de lluvia, actividades, ropa o planes, da una respu
 
 Pregunta del usuario: "${question}"`;
 
-  return await callGeminiRaw(prompt, systemPrompt, env, clientKey, false);
+  return await callGeminiRaw(prompt, systemPrompt, env);
 }

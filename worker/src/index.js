@@ -732,7 +732,7 @@ export default {
       if (url.pathname === "/gemini/overview" && request.method === "POST") {
         let body;
         try { body = await request.json(); } catch (_) { body = {}; }
-        const result = await generateWeatherOverview(body.context || {}, env, body.apiKey);
+        const result = await generateWeatherOverview(body.context || {}, env);
         return new Response(JSON.stringify(result), {
           status: result.ok ? 200 : (result.status || 400),
           headers: { ...headers, "Content-Type": "application/json" }
@@ -741,7 +741,7 @@ export default {
       if (url.pathname === "/gemini/chat" && request.method === "POST") {
         let body;
         try { body = await request.json(); } catch (_) { body = {}; }
-        const result = await chatWithGemini(body.question || "", body.context || {}, env, body.apiKey);
+        const result = await chatWithGemini(body.question || "", body.context || {}, env);
         return new Response(JSON.stringify(result), {
           status: result.ok ? 200 : (result.status || 400),
           headers: { ...headers, "Content-Type": "application/json" }

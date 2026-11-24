@@ -175,7 +175,7 @@ async function runSummary(env, rows, now) {
       const aiPrompt = night
         ? `Crea una notificación push ultra concisa (máximo 100 caracteres) en tono amigable argentino para la madrugada: ${payload.body}. Solo el texto de la notificación sin comillas.`
         : `Crea una notificación push ultra concisa (máximo 100 caracteres) en tono amigable argentino para el resumen del día: ${payload.body}. Solo el texto de la notificación sin comillas.`;
-      const aiRes = await callGeminiRaw(aiPrompt, "Sé conciso, natural, sin emojis repetidos, máximo 100 caracteres.", env, null, false);
+      const aiRes = await callGeminiRaw(aiPrompt, "Sé conciso, natural, sin emojis repetidos, máximo 100 caracteres.", env);
       if (aiRes?.ok && aiRes.text) {
         payload.body = aiRes.text.trim().replace(/^["']|["']$/g, '');
       }
