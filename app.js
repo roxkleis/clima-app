@@ -1006,7 +1006,7 @@ async function requestGeminiWeather(route,accessToken,question,history){
     return {ok:false,error:'WEATHER_UNAVAILABLE',message:'Actualizá el pronóstico para consultar a Gemini.'};
   }
   const result=await fetch(GEMINI_WORKER+'/gemini/'+route,{
-    method:'POST',cache:'no-store',signal:AbortSignal.timeout(18000),
+    method:'POST',cache:'no-store',signal:AbortSignal.timeout(30000),
     headers:{'Content-Type':'application/json',Authorization:'Bearer '+accessToken},
     body:JSON.stringify({context,question,history}),
   }).then(response=>response.json()).catch(()=>({
@@ -1093,7 +1093,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=28').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=29').catch(err => console.warn('SW:', err));
   });
 }
 

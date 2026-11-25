@@ -34,6 +34,7 @@ async function callGeminiRaw(prompt, systemInstruction, env, {
     generationConfig: {
       temperature: 0.3,
       maxOutputTokens: 1000,
+      thinkingConfig: { thinkingLevel: "minimal" },
       ...(asJson ? { responseMimeType: "application/json" } : {})
     }
   };
@@ -53,7 +54,7 @@ async function callGeminiRaw(prompt, systemInstruction, env, {
       },
       body: JSON.stringify(payload),
       redirect: "manual",
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(asJson ? (url === GEMINI_API_URL ? 14000 : 10000) : 10000)
     });
 
     if (!response.ok) {
@@ -86,6 +87,11 @@ async function callGeminiRaw(prompt, systemInstruction, env, {
       : /json|unexpected token/i.test(message) ? "invalid-json"
       : /timeout|timed out|abort/i.test(message) ? "timeout" : "transport";
     console.warn("gemini-upstream-error", reason);
+    if (reason === "timeout" && url === GEMINI_API_URL) {
+      return await callGeminiRaw(prompt, systemInstruction, env, {
+        asJson, channel, history, url: GEMINI_ALTERNATE_URL,
+      });
+    }
     return { ok: false, status: 502, error: "NETWORK_ERROR", message: "Error al conectar con Gemini." };
   }
 }
