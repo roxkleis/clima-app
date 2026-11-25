@@ -210,7 +210,6 @@
 .gemini-button:disabled,.gemini-text-button:disabled { opacity: .65; cursor: default; }
 .gemini-dialog :focus-visible,.gemini-fab:focus-visible,.gemini-text-button:focus-visible { outline: 2px solid #a4e2ff; outline-offset: 3px; }
 
-#geminiAccessForm > .gemini-button { margin-top: 12px; }
 .gemini-chat[open] { display: flex; flex-direction: column; gap: 8px; }
 .gemini-chat .gemini-dialog-head { margin-bottom: 0; }
 

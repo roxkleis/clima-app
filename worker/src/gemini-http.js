@@ -1,8 +1,6 @@
 import { chatWithGemini, generateWeatherOverview } from "./gemini.js";
 import { readAlertsAtLocation } from "./smn-alerts.js";
 
-const accessTokenPattern = /^[A-Za-z0-9_-]{32,128}$/;
-const bearerPattern = /^Bearer ([A-Za-z0-9_-]{32,128})$/i;
 const maxBodyBytes = 32 * 1024;
 const maxQuestionLength = 500;
 const contextFields = [
@@ -10,16 +8,6 @@ const contextFields = [
   "humidity", "precip", "condition", "modelsDetail", "hourlySummary", "dailySummary",
   "rainOutlook", "forecastRevision", "observationDetail",
 ];
-const encoder = new TextEncoder();
-
-async function matchesAccessToken(provided, expected) {
-  const [providedHash, expectedHash] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(provided)),
-    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
-  ]);
-  return crypto.subtle.timingSafeEqual(providedHash, expectedHash);
-}
-
 async function readGeminiBody(request) {
   const reader = request.body?.getReader();
   if (!reader) return { status: 400, error: "INVALID_JSON" };
@@ -74,17 +62,11 @@ function describeAlerts({ status, alerts }) {
 }
 
 export async function handleGeminiRequest(request, env, headers, route) {
-  const errorResponse = (status, error, extraHeaders = {}) =>
-    Response.json({ ok: false, error }, { status, headers: { ...headers, ...extraHeaders } });
+  const errorResponse = (status, error) =>
+    Response.json({ ok: false, error }, { status, headers });
 
-  const expected = env.GEMINI_ACCESS_TOKEN;
-  if (!env.GEMINI_API_KEY || typeof expected !== "string" || !accessTokenPattern.test(expected)) {
+  if (!env.GEMINI_API_KEY) {
     return errorResponse(503, "GEMINI_UNAVAILABLE");
-  }
-
-  const provided = request.headers.get("Authorization")?.match(bearerPattern)?.[1];
-  if (!provided || !await matchesAccessToken(provided, expected)) {
-    return errorResponse(401, "UNAUTHORIZED", { "WWW-Authenticate": "Bearer" });
   }
 
   const parsed = await readGeminiBody(request);

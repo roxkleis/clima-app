@@ -2,11 +2,6 @@
   const api = window.climaGemini;
   const byId = (id) => document.getElementById(id);
   const controls = {
-    access: byId("geminiAccess"),
-    accessDialog: byId("geminiAccessDialog"),
-    accessForm: byId("geminiAccessForm"),
-    accessStatus: byId("geminiAccessStatus"),
-    tokenInput: byId("geminiToken"),
     summary: byId("geminiSummary"),
     status: byId("geminiStatus"),
     retry: byId("geminiRetry"),
@@ -24,19 +19,14 @@
     question: byId("geminiQuestion"),
     dictate: byId("geminiDictate"),
   };
-  const accessSubmit = controls.accessForm.querySelector('[type="submit"]');
   const chatSubmit = controls.chatForm.querySelector('[type="submit"]');
-  const tokenKey = "clima-consenso:gemini-access";
-  const tokenPattern = /^[A-Za-z0-9_-]{32,128}$/;
   const alertTime = new Intl.DateTimeFormat("es-AR", {
     timeZone: "America/Argentina/Buenos_Aires", dateStyle: "short", timeStyle: "short",
   });
   const recognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  let accessToken = "";
   try {
-    const saved = sessionStorage.getItem(tokenKey);
-    if (saved && tokenPattern.test(saved)) accessToken = saved;
+    sessionStorage.removeItem("clima-consenso:gemini-access");
   } catch {}
   let overviewVersion = 0;
   let alertSignature = null;
@@ -44,17 +34,7 @@
   let chatVersion = 0;
   let chatBusy = false;
   let chatHistory = [];
-  let chatAfterAccess = false;
   let recognition = null;
-
-  function saveAccess(token) {
-    accessToken = token;
-    try {
-      if (token) sessionStorage.setItem(tokenKey, token);
-      else sessionStorage.removeItem(tokenKey);
-    } catch {}
-    controls.access.textContent = token ? "Cerrar acceso" : "Activar Gemini";
-  }
 
   function setText(element, text) {
     element.textContent = typeof text === "string" ? text : "";
@@ -151,7 +131,6 @@
 
   function errorMessage(result) {
     switch (result?.error) {
-      case "UNAUTHORIZED": return "El código de acceso no es válido.";
       case "QUOTA_EXHAUSTED": return "Llegaste al límite diario del asistente.";
       case "WEATHER_UNAVAILABLE": return "Actualizá el clima para seguir consultando.";
       case "WEATHER_CHANGED": return "El pronóstico cambió. Volvé a consultar.";
@@ -165,7 +144,7 @@
   function syncChat() {
     const weather = api.weather();
     controls.chatLocation.textContent = weather.location || "";
-    chatSubmit.disabled = chatBusy || !accessToken || weather.state !== "ready";
+    chatSubmit.disabled = chatBusy || weather.state !== "ready";
     controls.dictate.disabled = chatSubmit.disabled;
   }
 
@@ -174,46 +153,19 @@
     if (!controls.chatDialog.open) controls.chatDialog.showModal();
   }
 
-  function openAccess(forChat, message = "") {
-    chatAfterAccess = forChat;
-    controls.accessStatus.textContent = message;
-    controls.tokenInput.value = "";
-    accessSubmit.disabled = api.weather().state !== "ready";
-    if (!controls.accessDialog.open) controls.accessDialog.showModal();
-  }
-
-  async function loadOverview(token = accessToken, activating = false) {
+  async function loadOverview() {
     const weather = api.weather();
     if (weather.state !== "ready") return;
     const version = ++overviewVersion;
-    const status = activating ? controls.accessStatus : controls.status;
-    status.textContent = activating ? "Verificando acceso…" : "Preparando el parte…";
+    controls.status.textContent = "Preparando el parte…";
     controls.retry.hidden = true;
-    if (activating) accessSubmit.disabled = true;
-
-    const result = await api.overview(token);
-    if (version !== overviewVersion || api.weather() !== weather || (activating && !controls.accessDialog.open)) return;
+    const result = await api.overview();
+    if (version !== overviewVersion || api.weather() !== weather) return;
 
     if (result?.officialAlerts) renderAlerts(result.officialAlerts);
-    const authenticated = Boolean(result?.ok || result?.officialAlerts);
-    if (activating && !authenticated) {
-      status.textContent = errorMessage(result);
-      accessSubmit.disabled = false;
-      return;
-    }
-    if (activating) {
-      const openRequested = chatAfterAccess;
-      saveAccess(token);
-      controls.accessDialog.close();
-      if (openRequested) openChat();
-    } else if (result?.error === "UNAUTHORIZED") {
-      saveAccess("");
-      syncChat();
-    }
-
     renderOverview(result?.ok ? result.data : null);
     controls.status.textContent = result?.ok ? "" : errorMessage(result);
-    controls.retry.hidden = Boolean(result?.ok || !accessToken ||
+    controls.retry.hidden = Boolean(result?.ok ||
       result?.error === "QUOTA_EXHAUSTED" || result?.error === "WEATHER_UNAVAILABLE");
     if (!result?.officialAlerts) await loadAlerts(weather);
   }
@@ -224,8 +176,6 @@
     chatBusy = false;
     renderOverview(null);
     controls.retry.hidden = true;
-    controls.access.disabled = weather.state !== "ready" && !accessToken;
-    accessSubmit.disabled = weather.state !== "ready";
     controls.status.textContent = weather.state === "saved" ? "Gemini requiere un pronóstico actualizado."
       : weather.state === "loading" ? "Cargando pronóstico…" : "";
     controls.chatStatus.textContent = ["unavailable", "saved"].includes(weather.state)
@@ -245,8 +195,7 @@
       controls.question.value = "";
       locationKey = nextLocation;
     }
-    if (accessToken) void loadOverview();
-    else void loadAlerts(weather);
+    void loadOverview();
   }
 
   function addMessage(label, content, isUser) {
@@ -303,45 +252,11 @@
     }
   }
 
-  controls.access.addEventListener("click", () => {
-    if (!accessToken) {
-      openAccess(false);
-      return;
-    }
-    overviewVersion++;
-    chatVersion++;
-    chatHistory = [];
-    chatBusy = false;
-    controls.messages.replaceChildren();
-    controls.question.value = "";
-    saveAccess("");
-    renderOverview(null);
-    controls.retry.hidden = true;
-    controls.status.textContent = "";
-    syncChat();
-  });
-  controls.openChat.addEventListener("click", () => {
-    if (accessToken) openChat();
-    else {
-      const { state } = api.weather();
-      openAccess(true, ["unavailable", "saved"].includes(state) ? "Actualizá el clima antes de activar Gemini."
-        : state === "loading" ? "Esperá a que se cargue el pronóstico." : "");
-    }
-  });
+  controls.openChat.addEventListener("click", openChat);
   controls.retry.addEventListener("click", () => void loadOverview());
   document.querySelectorAll("[data-gemini-close]").forEach(button =>
     button.addEventListener("click", () => button.closest("dialog").close())
   );
-  controls.accessDialog.addEventListener("close", () => {
-    controls.tokenInput.value = "";
-    accessSubmit.disabled = false;
-  });
-  controls.accessForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const token = controls.tokenInput.value.trim();
-    if (tokenPattern.test(token)) void loadOverview(token, true);
-  });
-
   controls.chatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const question = controls.question.value.trim();
@@ -358,7 +273,7 @@
     chatBusy = true;
     syncChat();
     controls.chatStatus.textContent = "Consultando el pronóstico…";
-    const result = await api.chat(accessToken, question, chatHistory);
+    const result = await api.chat(question, chatHistory);
     if (version !== chatVersion) {
       sent.remove();
       return;
@@ -373,13 +288,6 @@
       sent.remove();
       if (!controls.question.value) controls.question.value = question;
       controls.chatStatus.textContent = errorMessage(result);
-      if (result?.error === "UNAUTHORIZED") {
-        saveAccess("");
-        renderOverview(null);
-        controls.retry.hidden = true;
-        controls.chatDialog.close();
-        openAccess(true, errorMessage(result));
-      }
     }
     syncChat();
   });
@@ -395,7 +303,6 @@
     });
   }
 
-  saveAccess(accessToken);
   window.addEventListener("clima:weather", (event) => setWeather(event.detail));
   setWeather(api.weather());
 })();

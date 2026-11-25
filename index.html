@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.json?v=3">
   <link rel="stylesheet" href="styles.css?v=14">
   <link rel="stylesheet" href="observation-ui.css?v=1">
-  <link rel="stylesheet" href="gemini-ui.css?v=1">
+  <link rel="stylesheet" href="gemini-ui.css?v=2">
   <title>Clima by richardspulgar</title>
 </head>
 <body>
@@ -62,7 +62,6 @@
     <div class="gemini-overview" aria-labelledby="geminiHeading">
       <div class="gemini-overview-head">
         <h2 id="geminiHeading">Parte meteorológico</h2>
-        <button id="geminiAccess" class="gemini-text-button" type="button">Activar Gemini</button>
       </div>
       <p id="geminiSummary" hidden></p>
       <p id="geminiStatus" class="gemini-muted" role="status"></p>
@@ -183,19 +182,6 @@
 
 <button id="geminiOpenChat" class="gemini-fab" type="button" aria-haspopup="dialog">Preguntale al clima</button>
 
-<dialog id="geminiAccessDialog" class="gemini-dialog" aria-labelledby="geminiAccessTitle">
-  <form id="geminiAccessForm">
-    <div class="gemini-dialog-head">
-      <h2 id="geminiAccessTitle">Acceso a Gemini</h2>
-      <button class="close" type="button" data-gemini-close aria-label="Cerrar acceso">×</button>
-    </div>
-    <label for="geminiToken">Código de acceso de la app</label>
-    <input id="geminiToken" type="password" autocomplete="off" required minlength="32" maxlength="128" pattern="[A-Za-z0-9_\-]{32,128}" autofocus>
-    <p id="geminiAccessStatus" class="gemini-muted" role="status"></p>
-    <button class="gemini-button" type="submit">Activar</button>
-  </form>
-</dialog>
-
 <dialog id="geminiChatDialog" class="gemini-dialog gemini-chat" aria-labelledby="geminiChatTitle">
   <div class="gemini-dialog-head">
     <div>
@@ -216,8 +202,8 @@
   </form>
 </dialog>
 
-<script src="app.js?v=30"></script>
+<script src="app.js?v=31"></script>
 <script src="observation-ui.js?v=1"></script>
-<script src="gemini-ui.js?v=2"></script>
+<script src="gemini-ui.js?v=3"></script>
 </body>
 </html>
