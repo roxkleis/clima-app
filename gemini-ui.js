@@ -2,9 +2,6 @@
   const api = window.climaGemini;
   const byId = (id) => document.getElementById(id);
   const controls = {
-    summary: byId("geminiSummary"),
-    status: byId("geminiStatus"),
-    retry: byId("geminiRetry"),
     discrepancies: byId("geminiDiscrepancies"),
     lifestyle: byId("geminiLifestyle"),
     alertsStatus: byId("smnAlertsStatus"),
@@ -48,7 +45,6 @@
   }
 
   function renderOverview(data) {
-    setText(controls.summary, data?.summary);
     setCardText(controls.discrepancies, data?.discrepancies);
     setCardText(controls.alertsSummary, data?.alertsSummary);
     const tips = [
@@ -159,19 +155,11 @@
     const weather = api.weather();
     if (weather.state !== "ready") return;
     const version = ++overviewVersion;
-    controls.status.textContent = "Preparando el parte…";
-    controls.retry.hidden = true;
     const result = await api.overview();
     if (version !== overviewVersion || api.weather() !== weather) return;
 
     if (result?.officialAlerts) renderAlerts(result.officialAlerts);
-    const localSummary = result?.ok ? "" : api.localSummary();
-    renderOverview(result?.ok ? result.data : localSummary ? { summary: localSummary } : null);
-    controls.status.textContent = result?.ok ? ""
-      : localSummary ? "Parte generado con el pronóstico de la app. " + errorMessage(result)
-      : errorMessage(result);
-    controls.retry.hidden = Boolean(result?.ok ||
-      result?.error === "QUOTA_EXHAUSTED" || result?.error === "WEATHER_UNAVAILABLE");
+    renderOverview(result?.ok ? result.data : null);
     if (!result?.officialAlerts) await loadAlerts(weather);
   }
 
@@ -180,9 +168,6 @@
     chatVersion++;
     chatBusy = false;
     renderOverview(null);
-    controls.retry.hidden = true;
-    controls.status.textContent = weather.state === "saved" ? "Gemini requiere un pronóstico actualizado."
-      : weather.state === "loading" ? "Cargando pronóstico…" : "";
     controls.chatStatus.textContent = ["unavailable", "saved"].includes(weather.state)
       ? "Actualizá el clima para preguntar."
       : weather.state === "loading" ? "Cargando pronóstico…" : "";
@@ -259,7 +244,6 @@
 
   controls.openChat.addEventListener("click", openChat);
   byId("geminiShortcut").addEventListener("click", openChat);
-  controls.retry.addEventListener("click", () => void loadOverview());
   document.querySelectorAll("[data-gemini-close]").forEach(button =>
     button.addEventListener("click", () => button.closest("dialog").close())
   );
