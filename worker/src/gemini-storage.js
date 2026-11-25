@@ -1,19 +1,21 @@
-const DAILY_LIMITS = { interactive: 12, push: 4 };
+const DAILY_LIMIT_PER_MODEL = 500;
 const CACHE_TTL_MS = 45 * 60 * 1000;
 const quotaDayFormat = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" });
 const encoder = new TextEncoder();
 
-export async function reserveGeminiRequest(db, channel) {
+export async function reserveGeminiRequest(db, model) {
   const day = quotaDayFormat.format(new Date());
   const result = await db.prepare(`
     INSERT INTO gemini_daily_quota (channel, quota_day, requests)
-    VALUES (?, ?, 1)
+    SELECT ?1, ?2, 1 + COALESCE(SUM(requests), 0)
+    FROM gemini_daily_quota
+    WHERE quota_day = ?2 AND channel IN ('interactive', 'push')
     ON CONFLICT (channel) DO UPDATE SET
       quota_day = excluded.quota_day,
-      requests = CASE WHEN quota_day = excluded.quota_day THEN requests + 1 ELSE 1 END
+      requests = CASE WHEN quota_day = excluded.quota_day THEN requests + 1 ELSE excluded.requests END
     WHERE quota_day < excluded.quota_day
-       OR (quota_day = excluded.quota_day AND requests < ?)
-  `).bind(channel, day, DAILY_LIMITS[channel]).run();
+       OR (quota_day = excluded.quota_day AND requests < ?3)
+  `).bind(model, day, DAILY_LIMIT_PER_MODEL).run();
   return result.meta.changes === 1;
 }
 

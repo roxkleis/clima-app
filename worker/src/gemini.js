@@ -1,10 +1,11 @@
 import { reserveGeminiRequest, useGeminiCache } from "./gemini-storage.js";
 
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent";
-const GEMINI_ALTERNATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
+const GEMINI_MODEL = "gemini-3.1-flash-lite";
+const GEMINI_ALTERNATE_MODEL = "gemini-3.5-flash-lite";
+const geminiUrl = (model) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
 async function callGeminiRaw(prompt, systemInstruction, env, {
-  asJson = false, channel = "interactive", history = [], url = GEMINI_API_URL,
+  asJson = false, history = [], model = GEMINI_MODEL,
 } = {}) {
   const apiKey = env?.GEMINI_API_KEY?.trim();
   if (!apiKey) {
@@ -12,7 +13,12 @@ async function callGeminiRaw(prompt, systemInstruction, env, {
   }
 
   try {
-    if (!await reserveGeminiRequest(env.DB, channel)) {
+    if (!await reserveGeminiRequest(env.DB, model)) {
+      if (model === GEMINI_MODEL) {
+        return await callGeminiRaw(prompt, systemInstruction, env, {
+          asJson, history, model: GEMINI_ALTERNATE_MODEL,
+        });
+      }
       return { ok: false, status: 429, error: "QUOTA_EXHAUSTED", message: "Se alcanzó el límite diario de Gemini." };
     }
   } catch {
@@ -46,7 +52,7 @@ async function callGeminiRaw(prompt, systemInstruction, env, {
   }
 
   try {
-    const response = await fetch(url, {
+    const response = await fetch(geminiUrl(model), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -54,14 +60,14 @@ async function callGeminiRaw(prompt, systemInstruction, env, {
       },
       body: JSON.stringify(payload),
       redirect: "manual",
-      signal: AbortSignal.timeout(asJson ? (url === GEMINI_API_URL ? 14000 : 10000) : 10000)
+      signal: AbortSignal.timeout(asJson ? (model === GEMINI_MODEL ? 14000 : 10000) : 10000)
     });
 
     if (!response.ok) {
       console.warn("gemini-upstream-status", response.status);
-      if (url === GEMINI_API_URL && [404, 503].includes(response.status)) {
+      if (model === GEMINI_MODEL && [404, 429, 503].includes(response.status)) {
         return await callGeminiRaw(prompt, systemInstruction, env, {
-          asJson, channel, history, url: GEMINI_ALTERNATE_URL,
+          asJson, history, model: GEMINI_ALTERNATE_MODEL,
         });
       }
       return {
@@ -87,9 +93,9 @@ async function callGeminiRaw(prompt, systemInstruction, env, {
       : /json|unexpected token/i.test(message) ? "invalid-json"
       : /timeout|timed out|abort/i.test(message) ? "timeout" : "transport";
     console.warn("gemini-upstream-error", reason);
-    if (reason === "timeout" && url === GEMINI_API_URL) {
+    if (reason === "timeout" && model === GEMINI_MODEL) {
       return await callGeminiRaw(prompt, systemInstruction, env, {
-        asJson, channel, history, url: GEMINI_ALTERNATE_URL,
+        asJson, history, model: GEMINI_ALTERNATE_MODEL,
       });
     }
     return { ok: false, status: 502, error: "NETWORK_ERROR", message: "Error al conectar con Gemini." };
@@ -131,7 +137,7 @@ Genera un JSON con esta estructura exacta:
 }`;
 
   const cacheParts = [
-    "overview", GEMINI_API_URL, ctx.locationId, ctx.lat, ctx.lon,
+    "overview", geminiUrl(GEMINI_MODEL), ctx.locationId, ctx.lat, ctx.lon,
     ctx.forecastRevision, ctx.alertsRevision, systemPrompt, userPrompt,
   ];
   return useGeminiCache(env.DB, cacheParts, async () => {
@@ -184,9 +190,9 @@ export async function rewriteSummaryNotification(body, night, eventKey, env) {
   const period = night ? "la madrugada" : "el resumen del día";
   const prompt = `Crea una notificación push ultra concisa (máximo 100 caracteres) en tono amigable argentino para ${period}: ${body}. Solo el texto de la notificación sin comillas.`;
   const instructions = "Conserva los valores, el lugar y la vigencia del pronóstico provisto. No agregues fenómenos ni condiciones. Escribe una sola línea de hasta 100 caracteres.";
-  const cacheParts = ["push", GEMINI_API_URL, eventKey, instructions, prompt];
+  const cacheParts = ["push", geminiUrl(GEMINI_MODEL), eventKey, instructions, prompt];
   const result = await useGeminiCache(env.DB, cacheParts, async () => {
-    const response = await callGeminiRaw(prompt, instructions, env, { channel: "push" });
+    const response = await callGeminiRaw(prompt, instructions, env);
     if (!response.ok) return response;
     const text = response.text.trim().replace(/^["']|["']$/g, "").trim();
     const numbers = value => (value.replaceAll("−", "-").match(/\d{1,2}:\d{2}|-?\d+(?:[.,]\d+)?/g) ?? []).sort().join("|");
