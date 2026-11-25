@@ -1028,10 +1028,39 @@ async function requestGeminiWeather(route,question,history){
   return snapshot===latestWeather ? result : {ok:false,error:'WEATHER_CHANGED'};
 }
 
+function localWeatherSummary(){
+  if(!latestWeather) return '';
+  const {models,position,location,observation,loadedAt}=latestWeather;
+  const {latitude,longitude}=position.coords;
+  const smn=models.find(model=>model.key==='smn');
+  const target=smn?.data?.data?.[0]?.validTime || new Date(loadedAt).toISOString();
+  const snapshots=models.map(model=>currentSnapshot(model,target));
+  const consensus=consensusFor(snapshots);
+  const observed=Number.isFinite(observation?.temp);
+  const temperature=observed ? observation.temp : consensus.temp;
+  const current=observationWeatherInfo(observed ? observation : null,latitude,longitude)?.[1] ??
+    (snapshots.some(model=>Number.isFinite(model.code))
+      ? weatherInfoAtTime(consensusWeatherCode(snapshots),new Date(target),latitude,longitude)[1] : null);
+  const today=dailyForecast(models)[0];
+  const range=[
+    Number.isFinite(today?.min) ? `mínima de ${Math.round(today.min)} °C` : '',
+    Number.isFinite(today?.max) ? `máxima de ${Math.round(today.max)} °C` : '',
+  ].filter(Boolean).join(' y ');
+  const lines=[];
+  if(Number.isFinite(temperature)){
+    lines.push(`En ${location}, ${observed ? 'la estación del SMN registró' : 'los modelos estiman'} ${Math.round(temperature)} °C.`);
+  }
+  if(current) lines.push(current+'.');
+  if(range) lines.push(`Para hoy se espera ${range}.`);
+  lines.push(rainOutlook(models)+'.');
+  return lines.join(' ');
+}
+
 window.climaGemini={
   weather:()=>weatherStatus,
   alerts:(lat,lon)=>fetchJsonWithTimeout(GEMINI_WORKER+'/alerts/smn?'+new URLSearchParams({lat,lon})),
   overview:()=>requestGeminiWeather('overview'),
+  localSummary:localWeatherSummary,
   chat:(question,history)=>requestGeminiWeather('chat',question,history),
 };
 
@@ -1106,7 +1135,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=31').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=32').catch(err => console.warn('SW:', err));
   });
 }
 

@@ -163,8 +163,11 @@
     if (version !== overviewVersion || api.weather() !== weather) return;
 
     if (result?.officialAlerts) renderAlerts(result.officialAlerts);
-    renderOverview(result?.ok ? result.data : null);
-    controls.status.textContent = result?.ok ? "" : errorMessage(result);
+    const localSummary = result?.ok ? "" : api.localSummary();
+    renderOverview(result?.ok ? result.data : localSummary ? { summary: localSummary } : null);
+    controls.status.textContent = result?.ok ? ""
+      : localSummary ? "Parte generado con el pronóstico de la app. " + errorMessage(result)
+      : errorMessage(result);
     controls.retry.hidden = Boolean(result?.ok ||
       result?.error === "QUOTA_EXHAUSTED" || result?.error === "WEATHER_UNAVAILABLE");
     if (!result?.officialAlerts) await loadAlerts(weather);
