@@ -12,18 +12,27 @@
   <link rel="stylesheet" href="styles.css?v=14">
   <link rel="stylesheet" href="observation-ui.css?v=1">
   <link rel="stylesheet" href="gemini-ui.css?v=2">
+  <link rel="stylesheet" href="atmosphere.css?v=1">
   <title>Clima by richardspulgar</title>
 </head>
 <body>
-<main class="app">
+<div class="atmosphere" id="atmosphere" aria-hidden="true"><div></div><div></div></div>
+<main class="app" id="inicio">
   <header class="topbar">
     <div>
-      <div class="eyebrow">Clima by richardspulgar</div>
+      <div class="brand"><img src="icons/weather/partly_cloudy_dark.svg" alt="" width="25" height="25"><span><strong>Clima</strong> by richardspulgar</span></div>
       <h1 id="location">Buscando ubicación…</h1>
+      <div class="location-region" id="locationRegion" hidden></div>
       <div class="updated" id="updated">Esperando datos…</div>
       <button id="changeLocation" class="location-button" type="button">Cambiar ubicación</button>
     </div>
-    <div class="status" id="status">GPS</div>
+    <div class="top-actions">
+      <div class="top-shortcuts">
+        <button class="notification-shortcut" id="geminiShortcut" type="button" aria-label="Preguntale al clima" aria-haspopup="dialog"><span class="ui-icon icon-chat" aria-hidden="true"></span></button>
+        <a class="notification-shortcut" href="#notifications" aria-label="Configuración de notificaciones"><span class="ui-icon icon-bell" aria-hidden="true"></span></a>
+      </div>
+      <div class="status" id="status" role="status">GPS</div>
+    </div>
   </header>
 
   <dialog id="locationDialog" class="location-dialog" aria-labelledby="locationTitle">
@@ -43,35 +52,39 @@
     </form>
   </dialog>
 
-  <section class="hero card">
+  <section class="hero" id="currentWeather" aria-busy="true" aria-label="Clima actual">
     <div class="weather-motion" id="weatherMotion" aria-hidden="true">
       <img class="weather-icon" id="weatherIcon" src="./icons/weather/partly_cloudy_dark.svg" alt="">
       <span></span><span></span><span></span>
     </div>
     <div class="hero-main">
-      <div class="condition" id="condition">Cargando consenso…</div>
-      <dl class="hero-range" aria-label="Temperaturas pronosticadas para hoy">
-        <div><dt>Máx.</dt><dd id="todayMax">—</dd></div>
-        <div><dt>Mín.</dt><dd id="todayMin">—</dd></div>
-      </dl>
       <div class="temperature"><span id="temperature">—</span><sup>°</sup></div>
+      <div class="condition" id="condition">Cargando consenso…</div>
       <div class="feels">Sensación térmica <strong id="apparent">—</strong>°</div>
-      <div class="rain-outlook" id="rainOutlook" role="status">Consultando próxima lluvia…</div>
       <div class="observation" id="observation" hidden></div>
     </div>
-    <div class="gemini-overview" aria-labelledby="geminiHeading">
+    <dl class="hero-range" aria-label="Temperaturas pronosticadas para hoy">
+      <div><dt>Máx.</dt><dd id="todayMax">—</dd></div>
+      <div><dt>Mín.</dt><dd id="todayMin">—</dd></div>
+    </dl>
+  </section>
+
+  <div class="card rain-banner" id="rainBanner">
+    <span class="ui-icon icon-rain" aria-hidden="true"></span>
+    <div class="rain-outlook" id="rainOutlook" role="status">Consultando próxima lluvia…</div>
+  </div>
+  <section class="gemini-overview card" aria-labelledby="geminiHeading">
       <div class="gemini-overview-head">
-        <h2 id="geminiHeading">Parte meteorológico</h2>
+        <h2 id="geminiHeading"><span class="ui-icon icon-part" aria-hidden="true"></span> Parte meteorológico</h2>
       </div>
       <p id="geminiSummary" hidden></p>
       <p id="geminiStatus" class="gemini-muted" role="status"></p>
       <button id="geminiRetry" class="gemini-text-button" type="button" hidden>Volver a consultar</button>
-    </div>
   </section>
 
   <section class="card gemini-card smn-alerts" aria-labelledby="smnAlertsTitle">
     <div class="gemini-card-head">
-      <h2 id="smnAlertsTitle">Alertas oficiales del SMN</h2>
+      <h2 id="smnAlertsTitle"><span class="ui-icon icon-alert" aria-hidden="true"></span> Alertas oficiales del SMN</h2>
       <a href="https://www.smn.gob.ar/alertas" target="_blank" rel="noopener">Ver en el SMN ↗</a>
     </div>
     <p id="smnAlertsStatus" class="gemini-muted" role="status">Consultando alertas para tu ubicación…</p>
@@ -82,12 +95,17 @@
     </div>
   </section>
 
-  <section class="metrics">
-    <div class="metric card"><span>🌧️ Precipitación</span><strong id="rain">—</strong></div>
-    <div class="metric card"><span>💧 Humedad</span><strong id="humidity">—</strong></div>
+  <section class="metrics" aria-label="Indicadores meteorológicos">
+    <div class="metric card"><span><i class="ui-icon icon-rain" aria-hidden="true"></i> Precipitación</span><strong id="rain">—</strong></div>
+    <div class="metric card"><span><i class="ui-icon icon-drop" aria-hidden="true"></i> Humedad</span><strong id="humidity">—</strong></div>
+    <div class="metric card" id="windMetric" hidden><span><i class="ui-icon icon-wind" aria-hidden="true"></i> Viento</span><strong id="windValue"></strong><small id="windDetail"></small></div>
+    <div class="metric card" id="pressureMetric" hidden><span>Presión</span><strong id="pressureValue"></strong></div>
+    <div class="metric card" id="visibilityMetric" hidden><span>Visibilidad</span><strong id="visibilityValue"></strong></div>
+    <div class="metric card" id="cloudMetric" hidden><span>Nubosidad</span><strong id="cloudValue"></strong></div>
+    <div class="metric card" id="solarMetric" hidden><span>Amanecer / atardecer</span><strong id="solarValue"></strong><small>Horarios estimados</small></div>
   </section>
 
-  <button id="consensusBadge" class="consensus" type="button" aria-expanded="false">
+  <button id="consensusBadge" class="consensus" type="button" aria-expanded="false" aria-controls="modelDetails">
     <span id="consensusDot" class="dot"></span>
     <span>
       <strong id="consensusTitle">Consenso —</strong>
@@ -117,7 +135,7 @@
 
   <section class="section">
     <div class="section-title">
-      <h2>Próximas horas</h2>
+      <h2><span class="ui-icon icon-clock" aria-hidden="true"></span> Próximas horas</h2>
       <span>6 horas</span>
     </div>
     <div id="hourly" class="hourly"></div>
@@ -141,7 +159,7 @@
       <span class="badge">Consenso</span>
     </div>
     <div class="daily-card">
-      <div id="daily" class="daily-strip"></div>
+      <div id="daily" class="daily-strip" tabindex="0" role="region" aria-label="Pronóstico por día, desplazamiento horizontal"></div>
     </div>
   </section>
 
@@ -163,11 +181,11 @@
       </div>
       <span id="notificationState" class="notification-state">OFF</span>
     </div>
-    <button id="enableNotifications" class="notification-button" type="button">🔔 Activar avisos</button>
+    <button id="enableNotifications" class="notification-button" type="button">Activar avisos</button>
     <div id="notificationOptions" class="notification-options hidden">
       <label><input id="alertsSmn" type="checkbox" checked> Alertas oficiales SMN · CABA y GBA</label>
       <label><input id="alertsStorm" type="checkbox" checked> Tormentas importantes</label>
-      <label><input id="maxTempNotification" type="checkbox" checked> 🌡️ Aviso cuando se alcance la temperatura máxima</label>
+      <label><input id="maxTempNotification" type="checkbox" checked> Aviso cuando se alcance la temperatura máxima</label>
       <label><input id="dailySummary" type="checkbox" checked> 05:00 · Resumen del día en San Miguel</label>
       <label><input id="nightSummary" type="checkbox" checked> 20:00 · Temperaturas de madrugada en San Miguel</label>
       <button id="testNotification" class="notification-button" type="button">Enviar aviso de prueba</button>
@@ -175,12 +193,11 @@
   </section>
 
   <button id="installApp" class="install-app hidden" type="button">📲 Instalar Clima</button>
-  <button id="retry" class="primary" type="button">Actualizar clima</button>
+  <button id="retry" class="primary" type="button"><span class="ui-icon icon-refresh" aria-hidden="true"></span> <span id="retryLabel">Actualizar clima</span></button>
   <section id="message" class="message" role="status">Obteniendo ubicación…</section>
   <p class="icon-credit">Íconos meteorológicos de <a href="https://developers.google.com/maps/documentation/weather/weather-condition-icons?hl=es-419">Google Maps</a>.</p>
+  <div class="assistant-bar"><button id="geminiOpenChat" class="gemini-fab" type="button" aria-haspopup="dialog"><span class="ui-icon icon-chat" aria-hidden="true"></span> Preguntale al clima</button></div>
 </main>
-
-<button id="geminiOpenChat" class="gemini-fab" type="button" aria-haspopup="dialog">Preguntale al clima</button>
 
 <dialog id="geminiChatDialog" class="gemini-dialog gemini-chat" aria-labelledby="geminiChatTitle">
   <div class="gemini-dialog-head">
@@ -202,8 +219,8 @@
   </form>
 </dialog>
 
-<script src="app.js?v=32"></script>
+<script src="app.js?v=33"></script>
 <script src="observation-ui.js?v=1"></script>
-<script src="gemini-ui.js?v=4"></script>
+<script src="gemini-ui.js?v=5"></script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 ﻿const CACHE_PREFIX = "clima-consenso-v";
-const CACHE = `${CACHE_PREFIX}25`;
+const CACHE = `${CACHE_PREFIX}26`;
 const WEATHER_ICONS = [
   "clear", "cloudy", "drizzle", "flurries", "heavy", "heavy_snow", "isolated_tstorms",
   "mostly_clear", "mostly_cloudy", "mostly_cloudy_night", "mostly_sunny", "partly_clear",
@@ -9,7 +9,7 @@ const WEATHER_ICONS = [
 const ASSETS = [
   "./icons/icon.svg", "./icons/icon-192.png", "./icons/icon-512.png",
   "./", "./index.html", "./styles.css?v=14", "./observation-ui.css?v=1", "./gemini-ui.css?v=2",
-  "./app.js?v=32", "./observation-ui.js?v=1", "./gemini-ui.js?v=4", "./manifest.json?v=3",
+  "./atmosphere.css?v=1", "./app.js?v=33", "./observation-ui.js?v=1", "./gemini-ui.js?v=5", "./manifest.json?v=3",
   ...WEATHER_ICONS.map(icon => `./icons/weather/${icon}_dark.svg`)
 ];
 const APP_URL = new URL("./", self.registration.scope);

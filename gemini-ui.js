@@ -117,6 +117,8 @@
       unavailable: "No se pudo confirmar si hay alertas para esta ubicación.",
     };
     controls.alertsStatus.textContent = messages[status] ?? messages.unavailable;
+    const highest = ["roja", "naranja", "amarilla"].find(level => alerts.some(alert => alert.severity === level));
+    controls.alertsStatus.closest(".smn-alerts").dataset.level = highest ?? (status === "none" ? "none" : "unknown");
     if (signature === alertSignature) return;
 
     alertSignature = signature;
@@ -256,6 +258,7 @@
   }
 
   controls.openChat.addEventListener("click", openChat);
+  byId("geminiShortcut").addEventListener("click", openChat);
   controls.retry.addEventListener("click", () => void loadOverview());
   document.querySelectorAll("[data-gemini-close]").forEach(button =>
     button.addEventListener("click", () => button.closest("dialog").close())

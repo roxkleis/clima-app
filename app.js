@@ -44,10 +44,8 @@ const weatherEffects = {
 // Iconografía adaptada al ciclo solar real de la ubicación.
 // De noche, los estados despejados/parcialmente despejados usan luna
 // en lugar de sol; lluvia, nieve, niebla y tormenta mantienen sus iconos.
-function isNightTime(date,lat,lon){
-  if(!(date instanceof Date) || Number.isNaN(date.getTime())) return false;
-  if(!Number.isFinite(lat) || !Number.isFinite(lon)) return date.getHours() < 7 || date.getHours() >= 19;
-
+function solarTimes(date,lat,lon){
+  if(!(date instanceof Date) || Number.isNaN(date.getTime()) || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   const dayOfYear = Math.floor((Date.UTC(date.getFullYear(),date.getMonth(),date.getDate()) - Date.UTC(date.getFullYear(),0,0)) / 86400000);
   const gamma = 2*Math.PI/365 * (dayOfYear - 1 + (date.getHours() - 12)/24);
   const eqtime = 229.18 * (
@@ -63,18 +61,60 @@ function isNightTime(date,lat,lon){
 
   // Polar day/night: si no hay amanecer/atardecer calculable, usamos
   // la elevación solar aproximada como respaldo horario.
-  if(cosHour > 1 || cosHour < -1) return date.getHours() < 7 || date.getHours() >= 19;
+  if(cosHour > 1 || cosHour < -1) return null;
 
   const hourAngle = Math.acos(cosHour) * 180/Math.PI;
-  const sunriseUTC = 720 - 4*(lon + hourAngle) - eqtime;
-  const sunsetUTC = 720 - 4*(lon - hourAngle) - eqtime;
-  const offsetMinutes = -date.getTimezoneOffset();
-  const minutesUTC = date.getUTCHours()*60 + date.getUTCMinutes() + date.getUTCSeconds()/60;
-  const sunriseLocal = (sunriseUTC + offsetMinutes + 1440) % 1440;
-  const sunsetLocal = (sunsetUTC + offsetMinutes + 1440) % 1440;
-  const localMinutes = date.getHours()*60 + date.getMinutes() + date.getSeconds()/60;
+  return {rise:720 - 4*(lon + hourAngle) - eqtime, set:720 - 4*(lon - hourAngle) - eqtime};
+}
 
-  return localMinutes < sunriseLocal || localMinutes >= sunsetLocal;
+function isNightTime(date,lat,lon){
+  if(!(date instanceof Date) || Number.isNaN(date.getTime())) return false;
+  const times=solarTimes(date,lat,lon);
+  if(!times) return date.getHours() < 7 || date.getHours() >= 19;
+  const minutesUTC = date.getUTCHours()*60 + date.getUTCMinutes() + date.getUTCSeconds()/60;
+  const sinceSunrise = ((minutesUTC - times.rise) % 1440 + 1440) % 1440;
+  return sinceSunrise >= times.set - times.rise;
+}
+
+function atmosphereScene(icon,condition,date,lat,lon,times){
+  const effect=weatherEffects[icon];
+  if(/niebla/i.test(condition)) return 'fog';
+  if(['storm','rain','snow'].includes(effect)) return effect;
+  if(icon==='cloudy' || icon==='mostly_cloudy' || icon==='mostly_cloudy_night') {
+    return isNightTime(date,lat,lon) ? 'cloud-night' : 'overcast';
+  }
+  if(times){
+    const minutes=date.getUTCHours()*60+date.getUTCMinutes();
+    const distance=(event)=>Math.abs(((minutes-event+2160)%1440)-720);
+    if(distance(times.rise)<=45) return 'dawn';
+    if(distance(times.set)<=50) return 'sunset';
+  }
+  if(isNightTime(date,lat,lon)) return 'night';
+  return icon==='partly_cloudy' ? 'partly' : 'day';
+}
+
+function setAtmosphere(scene){
+  const layers=$('atmosphere').children;
+  const active=[...layers].find(layer=>layer.classList.contains('visible'));
+  if(active?.dataset.sky===scene) return;
+  const next=[...layers].find(layer=>layer!==active);
+  next.dataset.sky=scene;
+  next.classList.add('visible');
+  active?.classList.remove('visible');
+}
+
+function displayLocation(place){
+  const [city,...region]=place.split(',').map(part=>part.trim());
+  els.location.textContent=city;
+  const subtitle=$('locationRegion');
+  subtitle.textContent=region.join(', ');
+  subtitle.hidden=!subtitle.textContent;
+}
+
+function displayMetric(name,value,detail=''){
+  $(name+'Metric').hidden=!value;
+  $(name+'Value').textContent=value;
+  if(name==='wind') $('windDetail').textContent=detail;
 }
 
 function weatherInfoAtTime(code,date,lat,lon){
@@ -494,18 +534,20 @@ function renderMain(items,position,placeName=null,observation=null,{saved=false,
   const observedCondition=observationWeatherInfo(observation,lat,lon);
   const [icon,condition]=observedCondition || weatherInfoAtTime(consensusWeatherCode(snaps),currentDate,lat,lon);
 
-  els.location.textContent=placeName || 'Mi ubicación';
+  displayLocation(placeName || 'Mi ubicación');
   els.updated.textContent=saved
     ? `Guardado el ${new Date(now).toLocaleString('es-AR',{dateStyle:'short',timeStyle:'short'})}`
     : `Actualizado ${new Date(now).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}`;
   if(position.coords.accuracy>LOCAL_WEATHER_ACCURACY) els.updated.textContent+=' · Ubicación aproximada';
   els.status.textContent=saved ? 'GUARDADO' : `${items.length} MODELOS OK`;
+  els.status.dataset.state=saved ? 'saved' : items.length===4 ? 'good' : 'partial';
   els.icon.hidden=false;
   els.icon.src=weatherIconSrc(icon);
   weatherMotion.hidden=false;
   weatherMotion.dataset.effect=weatherEffects[icon] || '';
   els.condition.textContent=condition;
   const rainStatus=rainOutlook(items,now);
+  $('rainBanner').dataset.state=rainStatus.startsWith('No hay') ? 'dry' : rainStatus.startsWith('Lluvia probable') ? 'wet' : 'watch';
   els.rainOutlook.textContent=saved ? `Al guardar: ${rainStatus}` : rainStatus;
   els.todayMax.closest('dl')?.setAttribute('aria-label',saved
     ? 'Temperaturas en el pronóstico guardado' : 'Temperaturas pronosticadas para hoy');
@@ -520,6 +562,25 @@ function renderMain(items,position,placeName=null,observation=null,{saved=false,
   els.humidity.textContent=observed && Number.isFinite(observation.humidity)
     ? `${Math.round(observation.humidity)}%`
     : (Number.isFinite(c.humidity)?`${Math.round(c.humidity)}%`:'—');
+  const skyDate=new Date(now);
+  const sun=solarTimes(skyDate,lat,lon);
+  setAtmosphere(atmosphereScene(icon,condition,skyDate,lat,lon,sun));
+  const measuredWind=Number.isFinite(observation?.windSpeed);
+  const wind=measuredWind ? observation.windSpeed*3.6 : median(snaps.map(model=>model.wind).filter(Number.isFinite));
+  const direction=observation?.windDirection;
+  const compass=['N','NE','E','SE','S','SO','O','NO'];
+  const windDirection=typeof direction==='string' ? direction : Number.isFinite(direction) ? compass[Math.round(direction/45)%8] : '';
+  displayMetric('wind',Number.isFinite(wind) ? Math.round(wind)+' km/h' : '',
+    measuredWind ? [windDirection,'SMN'].filter(Boolean).join(' · ') : 'Estimado por modelos');
+  displayMetric('pressure',Number.isFinite(observation?.pressure) ? Math.round(observation.pressure)+' hPa' : '');
+  displayMetric('visibility',typeof observation?.visibility==='string' ? observation.visibility : '');
+  displayMetric('cloud',Number.isFinite(observation?.cloudCover) ? Math.round(observation.cloudCover)+' %' : '');
+  const timeZone=items.find(item=>item.data.timezone)?.data.timezone;
+  if(sun && timeZone){
+    const midnight=Date.UTC(skyDate.getFullYear(),skyDate.getMonth(),skyDate.getDate());
+    const clock=new Intl.DateTimeFormat('es-AR',{timeZone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+    displayMetric('solar',[`↑ ${clock.format(midnight+sun.rise*60000)}`,`↓ ${clock.format(midnight+sun.set*60000)}`].join('  '));
+  }else displayMetric('solar','');
 
   if(els.observation){
     els.observation.hidden=!observed;
@@ -602,7 +663,9 @@ function hourlyForecast(items, now = Date.now()){
   });
 }
 
+let hourlyResizeObserver;
 function renderHourly(items,lat,lon,now,saved){
+  hourlyResizeObserver?.disconnect();
   const hours = hourlyForecast(items,now);
   els.hourly.replaceChildren();
   if(!hours.length) return;
@@ -645,31 +708,59 @@ function renderHourly(items,lat,lon,now,saved){
   chart.appendChild(canvas);
   els.hourly.appendChild(chart);
 
-  const width = chart.clientWidth;
-  const scale = window.devicePixelRatio || 1;
-  canvas.width = Math.round(width*scale);
-  canvas.height = Math.round(plotHeight*scale);
-  const ctx = canvas.getContext('2d');
-  if(!ctx) return;
-  ctx.scale(scale,scale);
-  ctx.strokeStyle = '#ffd476';
-  ctx.fillStyle = '#ffd476';
-  ctx.lineWidth = 2;
-  ctx.lineJoin = 'round';
-  ctx.beginPath();
-  points.forEach((y,index) => {
-    if(y === null) return;
-    const x = (index+.5)*width/hours.length;
-    if(index === 0 || points[index-1] === null) ctx.moveTo(x,y);
-    else ctx.lineTo(x,y);
-  });
-  ctx.stroke();
-  points.forEach((y,index) => {
-    if(y === null) return;
+  function draw(){
+    const width = chart.clientWidth;
+    if(!width) return;
+    const scale = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width*scale);
+    canvas.height = Math.round(plotHeight*scale);
+    const ctx = canvas.getContext('2d');
+    if(!ctx) return;
+    ctx.scale(scale,scale);
+    const line=ctx.createLinearGradient(0,0,width,0);
+    line.addColorStop(0,'#ffe18c');
+    line.addColorStop(1,'#ff9f59');
+    const fill=ctx.createLinearGradient(0,0,0,plotHeight);
+    fill.addColorStop(0,'rgba(255,204,112,.25)');
+    fill.addColorStop(1,'rgba(255,204,112,0)');
+    let start=0;
+    for(let i=0;i<=points.length;i++){
+      if(i<points.length && points[i]!==null) continue;
+      if(i-start>1){
+        ctx.beginPath();
+        ctx.moveTo((start+.5)*width/hours.length,plotHeight);
+        for(let j=start;j<i;j++) ctx.lineTo((j+.5)*width/hours.length,points[j]);
+        ctx.lineTo((i-.5)*width/hours.length,plotHeight);
+        ctx.closePath();
+        ctx.fillStyle=fill;
+        ctx.fill();
+      }
+      start=i+1;
+    }
+    ctx.strokeStyle = line;
+    ctx.fillStyle = '#ffd476';
+    ctx.lineWidth = 2.6;
+    ctx.lineJoin = 'round';
     ctx.beginPath();
-    ctx.arc((index+.5)*width/hours.length,y,2.5,0,Math.PI*2);
-    ctx.fill();
-  });
+    points.forEach((y,index) => {
+      if(y === null) return;
+      const x = (index+.5)*width/hours.length;
+      if(index === 0 || points[index-1] === null) ctx.moveTo(x,y);
+      else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+    points.forEach((y,index) => {
+      if(y === null) return;
+      ctx.beginPath();
+      ctx.arc((index+.5)*width/hours.length,y,2.5,0,Math.PI*2);
+      ctx.fill();
+    });
+  }
+  draw();
+  if(typeof ResizeObserver==='function'){
+    hourlyResizeObserver=new ResizeObserver(draw);
+    hourlyResizeObserver.observe(chart);
+  }
 }
 
 function smnDailyMap(smn,timezone){
@@ -784,6 +875,7 @@ function renderDaily(items,saved){
 
     const col = document.createElement('div');
     col.className = d.index === 0 && !saved ? 'day-col today' : 'day-col';
+    if(Number.isFinite(d.max) && d.max <= 5) col.dataset.thermal='cold';
     col.setAttribute('aria-label', `${dayTitle}: Máx ${formatTemperature(d.max)}, Mín ${formatTemperature(d.min)}, ${d.desc}, precipitación ${precipText}`);
 
     col.innerHTML = `
@@ -808,7 +900,7 @@ function renderDaily(items,saved){
 function showGpsError(error){
   els.status.textContent='GPS';
   els.rainOutlook.textContent='Pronóstico de lluvia sin ubicación confirmada';
-  els.location.textContent='Ubicación sin confirmar';
+  displayLocation('Ubicación sin confirmar');
   els.updated.textContent='Elegí tu ciudad en Cambiar ubicación.';
   setMessage({1:'Permiso de ubicación denegado.',2:'No fue posible determinar tu ubicación.',3:'La solicitud de ubicación tardó demasiado.'}[error.code]||'No se pudo obtener la ubicación.');
 }
@@ -904,6 +996,8 @@ async function showSavedWeather(requestId,place,position=null){
 }
 
 function clearWeatherValues(){
+  hourlyResizeObserver?.disconnect();
+  ['wind','pressure','visibility','cloud','solar'].forEach(name=>displayMetric(name,''));
   weatherMotion.hidden=true;
   els.icon.hidden=true;
   els.condition.textContent='Sin pronóstico disponible';
@@ -922,7 +1016,7 @@ function clearWeatherValues(){
 function showForecastError(location,message){
   clearWeatherValues();
   els.status.textContent='ERROR';
-  els.location.textContent=location || 'Mi ubicación';
+  displayLocation(location || 'Mi ubicación');
   els.rainOutlook.textContent='Pronóstico de lluvia no disponible';
   els.updated.textContent='No se pudo actualizar el pronóstico.';
   setMessage(message);
@@ -1070,6 +1164,7 @@ async function loadWeather(){
   publishWeatherStatus({state:'loading'});
   const place=selectedLocation;
   els.status.textContent='BUSCANDO';
+  $('rainBanner').dataset.state='neutral';
   els.rainOutlook.textContent='Consultando próxima lluvia…';
   els.observation.hidden=true;
   setMessage('Obteniendo ubicación…');
@@ -1118,6 +1213,13 @@ async function loadWeather(){
   publishWeatherStatus({state:'ready',location:latestWeather.location,lat,lon});
 }
 
+window.addEventListener('clima:weather',({detail})=>{
+  const busy=detail.state==='loading';
+  els.retry.disabled=busy;
+  $('currentWeather').setAttribute('aria-busy',String(busy));
+  $('retryLabel').textContent=busy ? 'Actualizando…' : 'Actualizar clima';
+  els.status.dataset.state=busy ? 'loading' : detail.state==='unavailable' ? 'unavailable' : els.status.dataset.state;
+});
 els.retry.addEventListener('click',loadWeather);
 window.addEventListener('offline',loadWeather);
 window.addEventListener('online',loadWeather);
@@ -1135,7 +1237,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=32').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=33').catch(err => console.warn('SW:', err));
   });
 }
 
