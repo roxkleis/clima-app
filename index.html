@@ -9,7 +9,7 @@
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="manifest" href="manifest.json?v=3">
-  <link rel="stylesheet" href="styles.css?v=12">
+  <link rel="stylesheet" href="styles.css?v=13">
   <link rel="stylesheet" href="observation-ui.css?v=1">
   <link rel="stylesheet" href="gemini-ui.css?v=1">
   <title>Clima by richardspulgar</title>
@@ -44,7 +44,10 @@
   </dialog>
 
   <section class="hero card">
-    <img class="weather-icon" id="weatherIcon" src="./icons/weather/partly_cloudy_dark.svg" alt="">
+    <div class="weather-motion" id="weatherMotion" aria-hidden="true">
+      <img class="weather-icon" id="weatherIcon" src="./icons/weather/partly_cloudy_dark.svg" alt="">
+      <span></span><span></span><span></span>
+    </div>
     <div class="hero-main">
       <div class="condition" id="condition">Cargando consenso…</div>
       <dl class="hero-range" aria-label="Temperaturas pronosticadas para hoy">
@@ -213,7 +216,7 @@
   </form>
 </dialog>
 
-<script src="app.js?v=29"></script>
+<script src="app.js?v=30"></script>
 <script src="observation-ui.js?v=1"></script>
 <script src="gemini-ui.js?v=2"></script>
 </body>

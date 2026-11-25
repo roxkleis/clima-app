@@ -30,6 +30,16 @@ const weatherMap = {
 const weatherInfo = code => weatherMap[code] || ["partly_cloudy","Condición variable"];
 const nightIcons = { sunny:"clear", mostly_sunny:"mostly_clear", partly_cloudy:"partly_clear" };
 const weatherIconSrc = icon => `./icons/weather/${icon}_dark.svg`;
+const weatherMotion = $('weatherMotion');
+const weatherEffects = {
+  sunny:'sun', mostly_sunny:'sun', partly_cloudy:'cloud',
+  clear:'moon', mostly_clear:'moon', partly_clear:'moon',
+  cloudy:'cloud', mostly_cloudy:'cloud', mostly_cloudy_night:'cloud',
+  drizzle:'rain', scattered_showers:'rain', showers:'rain', heavy:'rain',
+  isolated_tstorms:'storm', strong_tstorms:'storm',
+  flurries:'snow', scattered_snow:'snow', snow_showers:'snow', heavy_snow:'snow',
+  wintry_mix:'snow', sleet_hail:'snow'
+};
 
 // Iconografía adaptada al ciclo solar real de la ubicación.
 // De noche, los estados despejados/parcialmente despejados usan luna
@@ -492,6 +502,8 @@ function renderMain(items,position,placeName=null,observation=null,{saved=false,
   els.status.textContent=saved ? 'GUARDADO' : `${items.length} MODELOS OK`;
   els.icon.hidden=false;
   els.icon.src=weatherIconSrc(icon);
+  weatherMotion.hidden=false;
+  weatherMotion.dataset.effect=weatherEffects[icon] || '';
   els.condition.textContent=condition;
   const rainStatus=rainOutlook(items,now);
   els.rainOutlook.textContent=saved ? `Al guardar: ${rainStatus}` : rainStatus;
@@ -892,6 +904,7 @@ async function showSavedWeather(requestId,place,position=null){
 }
 
 function clearWeatherValues(){
+  weatherMotion.hidden=true;
   els.icon.hidden=true;
   els.condition.textContent='Sin pronóstico disponible';
   renderTemperature(els.temperature,null);
@@ -1093,7 +1106,7 @@ const installApp = document.getElementById('installApp');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=29').catch(err => console.warn('SW:', err));
+    navigator.serviceWorker.register('./sw.js?v=30').catch(err => console.warn('SW:', err));
   });
 }
 
