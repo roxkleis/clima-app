@@ -46,3 +46,5 @@ Aplicar también la migración `0004_smn_cap_index.sql` para que las rutas de Ge
 El parte se genera cuando se carga el pronóstico y **Preguntale al clima** abre el chat. El botón **Dictar** aparece en navegadores con reconocimiento de voz y deja el texto listo para revisar antes de enviarlo.
 
 La PWA puede recuperar durante 24 horas el último pronóstico guardado en el dispositivo. Si se abre sin conexión, la pantalla indica la ubicación y la fecha del pronóstico guardado. Gemini requiere un pronóstico actualizado y las alertas se vuelven a consultar al recuperar la conexión.
+
+La jurisdicción de Buenos Aires se valida con el [Servicio Georef](https://www.argentina.gob.ar/georef).

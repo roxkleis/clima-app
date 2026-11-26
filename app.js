@@ -198,7 +198,7 @@ async function fetchJsonWithTimeout(url,timeout=10000){
 }
 
 async function reverseGeocode(lat,lon){
-  const key=`clima-location-${lat.toFixed(3)}-${lon.toFixed(3)}`;
+  const key=`clima-location-v2-${lat.toFixed(4)}-${lon.toFixed(4)}`;
   try{
     const cached=sessionStorage.getItem(key);
     if(cached) return JSON.parse(cached);
@@ -207,14 +207,26 @@ async function reverseGeocode(lat,lon){
   const url=`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&localityLanguage=es`;
   const data=await fetchJsonWithTimeout(url);
 
-  const locality=data.locality || data.city || data.principalSubdivision || '';
-  const province=data.principalSubdivision || '';
+  let province=data.principalSubdivision || '';
+  const checkBuenosAires=['AR-C','AR-B'].includes(data.principalSubdivisionCode);
+  let confirmed=!checkBuenosAires;
+  if(checkBuenosAires){
+    // Servicio Georef – argentina.gob.ar/georef. Usa la jurisdicción oficial del punto.
+    const query=new URLSearchParams({lat,lon});
+    const official=await fetchJsonWithTimeout('https://apis.datos.gob.ar/georef/api/v2.0/ubicacion?'+query,3500).catch(()=>null);
+    const jurisdiction=official?.ubicacion?.provincia;
+    confirmed=Boolean(jurisdiction?.nombre);
+    province=jurisdiction?.id==='06' ? 'Provincia de Buenos Aires' : jurisdiction?.nombre || '';
+  }
+  const locality=data.locality || data.city || province;
   const name=locality && province && locality.toLowerCase()!==province.toLowerCase()
     ? `${locality}, ${province.replace(/ Province$/,'').replace(/ Province of /,'')}`
     : locality || province || 'Mi ubicación';
 
   const result={name,locality,province};
-  try{sessionStorage.setItem(key,JSON.stringify(result));}catch(_){}
+  if(confirmed){
+    try{sessionStorage.setItem(key,JSON.stringify(result));}catch(_){}
+  }
   return result;
 }
 
